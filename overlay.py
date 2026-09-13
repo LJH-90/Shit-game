@@ -70,8 +70,8 @@ HOTKEY_ID = 0x4D47  # 'MG'
 
 # 논리 키 매핑 (tk keysym 소문자 → 논리 키 목록)
 _KEYMAP = {
-    "left": ["left", "sel_left"],
-    "right": ["right", "sel_right"],
+    "left": ["left"],        # game.py 가 select/continue 화면에서도 left/right 를 해석한다 (sel_* 중복 전송 금지)
+    "right": ["right"],
     "up": ["up", "jump"],
     "down": ["down"],
     "z": ["jump"],
