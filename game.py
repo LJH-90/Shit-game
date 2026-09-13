@@ -1340,7 +1340,8 @@ def selftest() -> int:
     w.key_down("confirm"); w.key_up("confirm")
     assert w.state == "play" and w.stage_no == 1, (w.state, w.stage_no)
     assert w.snapshot()["hud"]["stage_name"] == "1스테이지: 총무팀"
-    assert w.snapshot()["hud"]["show_enemy_hp"] is True      # hyunki selected
+    sel = CHAR_KEYS[w.snapshot()["hud"]["select_index"]]
+    assert w.snapshot()["hud"]["show_enemy_hp"] is bool(w.chars[sel].get("show_enemy_hp", False))
     print("PASS 1: select -> play via confirm")
 
     # stage table sanity: build stages 1..45 without error

@@ -148,9 +148,9 @@ class World:
 {
   "hotkey": "shift+0",
   "characters": {
-    "jaehwi": {"name": "이재휘", "trait": "힘",   "damage": 2.0, "speed": 0.9, "fire_rate": 1.0, "jump": 1.0, "pierce": false},
-    "hyunki": {"name": "문현기", "trait": "지능", "damage": 1.0, "speed": 1.0, "fire_rate": 1.0, "jump": 1.0, "pierce": true, "show_enemy_hp": true},
-    "dongil": {"name": "석동일", "trait": "민첩", "damage": 1.0, "speed": 1.3, "fire_rate": 1.5, "jump": 1.2, "pierce": false}
+    "jaehwi": {"name": "이재휘", "trait": "민첩", "damage": 1.0, "speed": 1.3, "fire_rate": 1.5, "jump": 1.2, "pierce": false},
+    "hyunki": {"name": "문현기", "trait": "힘",   "damage": 2.0, "speed": 0.9, "fire_rate": 1.0, "jump": 1.0, "pierce": false},
+    "dongil": {"name": "석동일", "trait": "지능", "damage": 1.0, "speed": 1.0, "fire_rate": 1.0, "jump": 1.0, "pierce": true, "show_enemy_hp": true}
   },
   "lives": 3,
   "fps": 30,
