@@ -1,0 +1,12 @@
+build/
+dist/
+dist_new/
+*.spec
+__pycache__/
+tools/frames/
+cache.dat
+_test_cache.dat
+*.jpg
+IconCourt-source.zip
+DESIGN_NOTES.md
+README (1).md

@@ -1,0 +1,507 @@
+{
+  "_comment": "MolGam stage data. Edit freely: departments (10, in order), executive_stages (after departments), ranks (palette -> stats), difficulty multipliers (infinite rotation), wave sizing.",
+  "departments": [
+    {
+      "name": "총무팀",
+      "waves": 3,
+      "grunts": [
+        "intern",
+        "staff"
+      ],
+      "elites": [],
+      "boss": "teamlead",
+      "boss_title": "총무팀장",
+      "platforms": 1,
+      "pits": 0,
+      "lab": false
+    },
+    {
+      "name": "인사팀",
+      "waves": 3,
+      "grunts": [
+        "staff",
+        "assistant"
+      ],
+      "elites": [],
+      "boss": "teamlead",
+      "boss_title": "인사팀장",
+      "platforms": 1,
+      "pits": 0,
+      "lab": false
+    },
+    {
+      "name": "재무팀",
+      "waves": 3,
+      "grunts": [
+        "assistant",
+        "manager"
+      ],
+      "elites": [
+        "deputy"
+      ],
+      "boss": "teamlead",
+      "boss_title": "재무팀장",
+      "platforms": 2,
+      "pits": 1,
+      "lab": false
+    },
+    {
+      "name": "영업팀",
+      "waves": 4,
+      "grunts": [
+        "manager"
+      ],
+      "elites": [
+        "deputy"
+      ],
+      "boss": "general",
+      "boss_title": "영업부장",
+      "platforms": 1,
+      "pits": 1,
+      "lab": false
+    },
+    {
+      "name": "마케팅팀",
+      "waves": 4,
+      "grunts": [
+        "manager"
+      ],
+      "elites": [
+        "deputy",
+        "general"
+      ],
+      "boss": "general",
+      "boss_title": "마케팅부장",
+      "platforms": 2,
+      "pits": 0,
+      "lab": false
+    },
+    {
+      "name": "구매팀",
+      "waves": 4,
+      "grunts": [
+        "assistant",
+        "manager"
+      ],
+      "elites": [
+        "deputy",
+        "general"
+      ],
+      "boss": "general",
+      "boss_title": "구매부장",
+      "platforms": 2,
+      "pits": 1,
+      "lab": false
+    },
+    {
+      "name": "품질팀",
+      "waves": 5,
+      "grunts": [
+        "manager"
+      ],
+      "elites": [
+        "general",
+        "teamlead"
+      ],
+      "boss": "director",
+      "boss_title": "품질실장",
+      "platforms": 1,
+      "pits": 1,
+      "lab": false
+    },
+    {
+      "name": "생산팀",
+      "waves": 5,
+      "grunts": [
+        "manager"
+      ],
+      "elites": [
+        "general",
+        "teamlead"
+      ],
+      "boss": "director",
+      "boss_title": "생산실장",
+      "platforms": 2,
+      "pits": 1,
+      "lab": false
+    },
+    {
+      "name": "개발팀",
+      "waves": 5,
+      "grunts": [
+        "manager"
+      ],
+      "elites": [
+        "deputy",
+        "general",
+        "teamlead"
+      ],
+      "boss": "director",
+      "boss_title": "개발실장",
+      "platforms": 2,
+      "pits": 1,
+      "lab": false
+    },
+    {
+      "name": "연구소",
+      "waves": 5,
+      "grunts": [
+        "lab1",
+        "lab2"
+      ],
+      "elites": [
+        "lab3",
+        "lab4"
+      ],
+      "boss": "lab5",
+      "boss_title": "연구소장",
+      "platforms": 2,
+      "pits": 1,
+      "lab": true
+    }
+  ],
+  "executive_stages": [
+    {
+      "name": "실장단",
+      "waves": 0,
+      "bosses": [
+        "director",
+        "director",
+        "director"
+      ],
+      "boss_titles": [
+        "기획실장",
+        "경영실장",
+        "전략실장"
+      ],
+      "grunts": [
+        "manager"
+      ],
+      "platforms": 2,
+      "pits": 0
+    },
+    {
+      "name": "상무·전무",
+      "waves": 0,
+      "bosses": [
+        "md",
+        "evp"
+      ],
+      "boss_titles": [
+        "상무",
+        "전무"
+      ],
+      "grunts": [
+        "manager"
+      ],
+      "platforms": 2,
+      "pits": 1
+    },
+    {
+      "name": "CEO",
+      "waves": 0,
+      "bosses": [
+        "ceo"
+      ],
+      "boss_titles": [
+        "CEO"
+      ],
+      "grunts": [
+        "deputy"
+      ],
+      "platforms": 2,
+      "pits": 1
+    },
+    {
+      "name": "회장",
+      "waves": 0,
+      "bosses": [
+        "chairman"
+      ],
+      "boss_titles": [
+        "회장"
+      ],
+      "grunts": [
+        "general"
+      ],
+      "platforms": 2,
+      "pits": 1
+    }
+  ],
+  "ranks": {
+    "intern": {
+      "title": "인턴",
+      "kind": "grunt",
+      "hp": 1,
+      "speed": 40,
+      "fire_rate": 0.15,
+      "score": 100,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 8,
+      "boss_scale": 4,
+      "boss_score": 1000,
+      "pattern": "mid"
+    },
+    "staff": {
+      "title": "사원",
+      "kind": "grunt",
+      "hp": 1,
+      "speed": 50,
+      "fire_rate": 0.2,
+      "score": 200,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 8,
+      "boss_scale": 4,
+      "boss_score": 1000,
+      "pattern": "mid"
+    },
+    "assistant": {
+      "title": "대리",
+      "kind": "grunt",
+      "hp": 1,
+      "speed": 60,
+      "fire_rate": 0.3,
+      "score": 300,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 10,
+      "boss_scale": 4,
+      "boss_score": 1000,
+      "pattern": "mid"
+    },
+    "manager": {
+      "title": "과장",
+      "kind": "grunt",
+      "hp": 1,
+      "speed": 70,
+      "fire_rate": 0.4,
+      "score": 400,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 10,
+      "boss_scale": 4,
+      "boss_score": 1000,
+      "pattern": "mid"
+    },
+    "deputy": {
+      "title": "차장",
+      "kind": "elite",
+      "hp": 2,
+      "speed": 110,
+      "fire_rate": 0.5,
+      "score": 300,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 12,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid"
+    },
+    "general": {
+      "title": "부장",
+      "kind": "elite",
+      "hp": 2,
+      "speed": 120,
+      "fire_rate": 0.6,
+      "score": 300,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 18,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid",
+      "boss_speed": 95
+    },
+    "teamlead": {
+      "title": "팀장",
+      "kind": "elite",
+      "hp": 3,
+      "speed": 130,
+      "fire_rate": 0.7,
+      "score": 300,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 12,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid",
+      "boss_speed": 90
+    },
+    "director": {
+      "title": "실장",
+      "kind": "boss",
+      "hp": 24,
+      "speed": 100,
+      "fire_rate": 0.8,
+      "score": 2000,
+      "scale": 4,
+      "boss": true,
+      "boss_hp": 24,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid"
+    },
+    "md": {
+      "title": "상무",
+      "kind": "boss",
+      "hp": 30,
+      "speed": 110,
+      "fire_rate": 0.9,
+      "score": 2000,
+      "scale": 4,
+      "boss": true,
+      "boss_hp": 30,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid"
+    },
+    "evp": {
+      "title": "전무",
+      "kind": "boss",
+      "hp": 36,
+      "speed": 120,
+      "fire_rate": 1.0,
+      "score": 2000,
+      "scale": 4,
+      "boss": true,
+      "boss_hp": 36,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid"
+    },
+    "ceo": {
+      "title": "CEO",
+      "kind": "final",
+      "hp": 60,
+      "speed": 110,
+      "fire_rate": 1.0,
+      "score": 10000,
+      "scale": 6,
+      "boss": true,
+      "boss_hp": 60,
+      "boss_scale": 6,
+      "boss_score": 10000,
+      "pattern": "final"
+    },
+    "chairman": {
+      "title": "회장",
+      "kind": "final",
+      "hp": 100,
+      "speed": 100,
+      "fire_rate": 1.0,
+      "score": 10000,
+      "scale": 6,
+      "boss": true,
+      "boss_hp": 100,
+      "boss_scale": 6,
+      "boss_score": 10000,
+      "pattern": "chairman"
+    },
+    "lab1": {
+      "title": "연구원",
+      "kind": "grunt",
+      "hp": 1,
+      "speed": 55,
+      "fire_rate": 0.25,
+      "score": 100,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 10,
+      "boss_scale": 4,
+      "boss_score": 1000,
+      "pattern": "mid"
+    },
+    "lab2": {
+      "title": "선임연구원",
+      "kind": "grunt",
+      "hp": 1,
+      "speed": 70,
+      "fire_rate": 0.4,
+      "score": 200,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 10,
+      "boss_scale": 4,
+      "boss_score": 1000,
+      "pattern": "mid"
+    },
+    "lab3": {
+      "title": "책임연구원",
+      "kind": "elite",
+      "hp": 2,
+      "speed": 120,
+      "fire_rate": 0.6,
+      "score": 300,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 14,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid"
+    },
+    "lab4": {
+      "title": "수석연구원",
+      "kind": "elite",
+      "hp": 3,
+      "speed": 130,
+      "fire_rate": 0.7,
+      "score": 300,
+      "scale": 2,
+      "boss": false,
+      "boss_hp": 16,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid"
+    },
+    "lab5": {
+      "title": "연구소장",
+      "kind": "boss",
+      "hp": 24,
+      "speed": 100,
+      "fire_rate": 0.9,
+      "score": 2000,
+      "scale": 4,
+      "boss": true,
+      "boss_hp": 24,
+      "boss_scale": 4,
+      "boss_score": 2000,
+      "pattern": "mid"
+    }
+  },
+  "difficulty": {
+    "easy": {
+      "hp": 0.8,
+      "speed": 0.9,
+      "count": 0.8
+    },
+    "normal": {
+      "hp": 1.0,
+      "speed": 1.0,
+      "count": 1.0
+    },
+    "hard": {
+      "hp": 1.6,
+      "speed": 1.25,
+      "count": 1.4
+    }
+  },
+  "wave": {
+    "base_count": 3,
+    "per_wave": 1,
+    "per_stage": 0.35,
+    "per_cycle": 1,
+    "max_count": 10,
+    "elite_ratio_base": 0.2,
+    "elite_ratio_per_wave": 0.1,
+    "elite_ratio_max": 0.5,
+    "spawn_stagger": 0.6
+  },
+  "progression": {
+    "hp_per_stage": 0.35,
+    "boss_hp_per_stage": 0.08,
+    "drop_grunt": 0.1,
+    "drop_elite": 0.3
+  }
+}
