@@ -1,54 +1,53 @@
 @echo off
-chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
 
 rem ------------------------------------------------------------
-rem  ì¶œë ¥ exe ì´ë¦„. ìž‘ì—…ê´€ë¦¬ìžì— ì´ ì´ë¦„ìœ¼ë¡œ í‘œì‹œë©ë‹ˆë‹¤. ì›í•˜ëŠ” ëŒ€ë¡œ ë°”ê¾¸ì„¸ìš”.
+rem  Ãâ·Â exe ÀÌ¸§. ÀÛ¾÷°ü¸®ÀÚ¿¡ ÀÌ ÀÌ¸§À¸·Î Ç¥½ÃµË´Ï´Ù. ¿øÇÏ´Â ´ë·Î ¹Ù²Ù¼¼¿ä.
 set EXE_NAME=SystemSettingsHelper
 rem ------------------------------------------------------------
 
 echo ============================================
-echo   MolGam - exe ë¹Œë“œ  (%EXE_NAME%.exe)
+echo   MolGam - exe ºôµå  (%EXE_NAME%.exe)
 echo ============================================
 echo.
 
 where python >nul 2>nul
 if errorlevel 1 (
-  echo [ì˜¤ë¥˜] python ì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤.
-  echo        https://www.python.org/downloads/windows/ ì—ì„œ ì„¤ì¹˜í•˜ê³ 
-  echo        ì„¤ì¹˜ í™”ë©´ì˜ "Add python.exe to PATH" ë¥¼ ë°˜ë“œì‹œ ì²´í¬í•˜ì„¸ìš”.
+  echo [¿À·ù] python À» Ã£À» ¼ö ¾ø½À´Ï´Ù.
+  echo        https://www.python.org/downloads/windows/ ¿¡¼­ ¼³Ä¡ÇÏ°í
+  echo        ¼³Ä¡ È­¸éÀÇ "Add python.exe to PATH" ¸¦ ¹Ýµå½Ã Ã¼Å©ÇÏ¼¼¿ä.
   pause
   exit /b 1
 )
 
-echo [0/3] ê²Œìž„ ë¡œì§ ìžì²´ ê²€ì¦...
+echo [0/3] °ÔÀÓ ·ÎÁ÷ ÀÚÃ¼ °ËÁõ...
 python game.py --selftest
 if errorlevel 1 (
-  echo [ê²½ê³ ] ìžì²´ ê²€ì¦ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤. ê·¸ëž˜ë„ ë¹Œë“œí•˜ë ¤ë©´ ì•„ë¬´ í‚¤ë‚˜ ëˆ„ë¥´ì„¸ìš”.
+  echo [°æ°í] ÀÚÃ¼ °ËÁõ¿¡ ½ÇÆÐÇß½À´Ï´Ù. ±×·¡µµ ºôµåÇÏ·Á¸é ¾Æ¹« Å°³ª ´©¸£¼¼¿ä.
   pause
 )
 
 echo.
-echo [1/3] PyInstaller ì„¤ì¹˜ í™•ì¸...
+echo [1/3] PyInstaller ¼³Ä¡ È®ÀÎ...
 python -m PyInstaller --version >nul 2>nul
 if errorlevel 1 (
   python -m pip install pyinstaller
   if errorlevel 1 (
-    echo [ì˜¤ë¥˜] PyInstaller ì„¤ì¹˜ì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤. ì¸í„°ë„· ì—°ê²°ì„ í™•ì¸í•˜ì„¸ìš”.
+    echo [¿À·ù] PyInstaller ¼³Ä¡¿¡ ½ÇÆÐÇß½À´Ï´Ù. ÀÎÅÍ³Ý ¿¬°áÀ» È®ÀÎÇÏ¼¼¿ä.
     pause
     exit /b 1
   )
 )
 
 echo.
-echo [2/3] ë¹Œë“œ ì¤‘... (1~2ë¶„ ê±¸ë¦½ë‹ˆë‹¤)
-rem  --add-data ë¡œ stages.json / config.json ì„ exe ì•ˆì— ë™ë´‰í•©ë‹ˆë‹¤.
-rem  ì‹¤í–‰ ì‹œì—ëŠ” exe ì˜† í´ë”ì˜ íŒŒì¼ì„ ë¨¼ì € ì½ê³ , ì—†ìœ¼ë©´ ë™ë´‰ë³¸ì„ ì”ë‹ˆë‹¤.
+echo [2/3] ºôµå Áß... (1~2ºÐ °É¸³´Ï´Ù)
+rem  --add-data ·Î stages.json / config.json À» exe ¾È¿¡ µ¿ºÀÇÕ´Ï´Ù.
+rem  ½ÇÇà ½Ã¿¡´Â exe ¿· Æú´õÀÇ ÆÄÀÏÀ» ¸ÕÀú ÀÐ°í, ¾øÀ¸¸é µ¿ºÀº»À» ¾¹´Ï´Ù.
 python -m PyInstaller --onefile --noconsole --clean --name %EXE_NAME% ^
   --add-data "stages.json;." --add-data "config.json;." molgam.py
 if errorlevel 1 (
-  echo [ì˜¤ë¥˜] ë¹Œë“œì— ì‹¤íŒ¨í–ˆìŠµë‹ˆë‹¤.
+  echo [¿À·ù] ºôµå¿¡ ½ÇÆÐÇß½À´Ï´Ù.
   pause
   exit /b 1
 )
@@ -57,10 +56,10 @@ copy /y stages.json dist\ >nul
 copy /y config.json dist\ >nul
 
 echo.
-echo [3/3] ì™„ë£Œ
-echo   ì‹¤í–‰ íŒŒì¼: %CD%\dist\%EXE_NAME%.exe
-echo   ì„¤ì • íŒŒì¼: %CD%\dist\config.json, stages.json  (exe ì˜†ì— ë‘ë©´ ê·¸ íŒŒì¼ì„ ìš°ì„  ì‚¬ìš©)
+echo [3/3] ¿Ï·á
+echo   ½ÇÇà ÆÄÀÏ: %CD%\dist\%EXE_NAME%.exe
+echo   ¼³Á¤ ÆÄÀÏ: %CD%\dist\config.json, stages.json  (exe ¿·¿¡ µÎ¸é ±× ÆÄÀÏÀ» ¿ì¼± »ç¿ë)
 echo.
-echo   ë°±ì‹ ì´ ì²˜ìŒ ì‹¤í–‰ì„ ë§‰ì„ ìˆ˜ ìžˆìŠµë‹ˆë‹¤. PyInstaller ë‹¨ì¼ exe ì˜ ì•Œë ¤ì§„ ì˜¤íƒìž…ë‹ˆë‹¤.
+echo   ¹é½ÅÀÌ Ã³À½ ½ÇÇàÀ» ¸·À» ¼ö ÀÖ½À´Ï´Ù. PyInstaller ´ÜÀÏ exe ÀÇ ¾Ë·ÁÁø ¿ÀÅ½ÀÔ´Ï´Ù.
 echo.
 pause

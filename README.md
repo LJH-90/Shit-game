@@ -13,6 +13,17 @@
 
 ## 1. 실행
 
+### 다운로드 (빌드 없이 바로 실행)
+
+**최신 릴리스: <https://github.com/LJH-90/Shit-game/releases/latest>**
+
+| 파일 | 용도 |
+|---|---|
+| `MolGam.zip` | 처음 설치하는 사람용. 풀면 `SystemSettingsHelper.exe` + `config.json` + `stages.json` + `사용법.txt` |
+| `SystemSettingsHelper.exe` | exe 만 (게임 안 업데이터가 받는 파일과 동일) |
+
+zip 을 풀고 `SystemSettingsHelper.exe` 를 더블클릭하면 됩니다. 설치 과정 없음.
+
 ### exe 가 있다면
 
 `dist\SystemSettingsHelper.exe` (이름은 빌드 시 바꿀 수 있음) 더블클릭. 옆에 `config.json`, `stages.json` 을 같이 두면 그 파일을 우선 읽습니다.
@@ -163,6 +174,7 @@ PyInstaller 를 자동 설치하고 `dist\` 에 exe 를 만듭니다. 파일 상
 2. 같은 번호로 태그를 푸시: `git tag v1.5.0` → `git push origin v1.5.0`
 3. GitHub Actions(`.github/workflows/release.yml`)가 태그·버전 일치 확인 → selftest → exe 빌드 → 릴리스 생성
    (첨부: `SystemSettingsHelper.exe` = 업데이터가 받는 파일, `MolGam.zip` = 새로 설치하는 사람용)
+4. 다운로드 주소: <https://github.com/LJH-90/Shit-game/releases/latest> (항상 최신 태그로 연결)
 
 태그와 `VERSION` 이 다르면 빌드가 실패합니다. 저장소가 공개여야 게임이 토큰 없이 릴리스를 받을 수 있습니다.
 
