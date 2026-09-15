@@ -66,6 +66,10 @@ from overlay import Overlay          # noqa: E402  (DPI 설정 포함, tk 임포
 import tkinter as tk                 # noqa: E402
 from sprites import SpriteBank       # noqa: E402
 from game import World, CHAR_KEYS    # noqa: E402
+try:                                 # v1.6: 팀 B 가 추가하는 상수. 아직 없으면 계약값으로 대체
+    from game import ELEMENT_KEYS    # noqa: E402
+except ImportError:
+    ELEMENT_KEYS = ["cheongryong", "baekho", "jujak", "hyeonmu"]
 import updater                       # noqa: E402
 from version import VERSION          # noqa: E402
 
@@ -85,6 +89,23 @@ PAPERS_PER_ZONE = 10                                 # 서류 스톰 한 영역�
 LOCKED_FG = "#7a8494"
 HUD_BG = "#161a22"
 HUD_EDGE = "#3d4a5c"
+MID_FG = "#ffd166"                                   # 중간 보스 라벨(금색)
+ELEM_STRONG_FG = "#ff9f43"                           # 속성 상성 "강!"
+ELEM_WEAK_FG = "#9aa4b2"                             # 속성 상성 "약"
+ELEM_DEFAULT_COLORS = {"cheongryong": "#4cc9f0", "baekho": "#f1f1f1",
+                       "jujak": "#ff6b6b", "hyeonmu": "#8d99ae"}      # hud.element_colors 없을 때
+ELEM_DEFAULT_NAMES = ["청룡", "백호", "주작", "현무"]
+ELEM_DIM_FG = "#7a8494"                              # 선택 안 된 속성 이름
+
+
+def _dim_color(hex_color: str, k: float = 0.35) -> str:
+    """#rrggbb 를 k 배 어둡게. 투명색(#010203)과 겹치지 않게 최소 8 로 클램프."""
+    try:
+        h = hex_color.lstrip("#")
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    except Exception:
+        r, g, b = 128, 128, 128
+    return "#%02x%02x%02x" % tuple(max(8, int(c * k)) for c in (r, g, b))
 
 
 class Renderer:
@@ -95,7 +116,10 @@ class Renderer:
         self.bank = bank
         self.config = config
         self.player_item = None
-        self.enemy_items: dict[int, dict] = {}     # id -> {"img":item,"label":item,"shadow":item,"hp":item,"hpbg":item}
+        self.shield_item = None
+        self.aura_feet = None                       # 플레이어 발밑 속성 타원
+        self.aura_ring = None                       # 플레이어 몸 뒤 맥동 링
+        self.enemy_items: dict[int, dict] = {}     # id -> {"img","label","hp","hpbg","ring"}
         self.bullet_pool: list[int] = []
         self.item_pool: list[tuple[int, int]] = []
         self.platform_pool: list[int] = []
@@ -145,9 +169,16 @@ class Renderer:
     def _sprite(self, anim, frame, palette, flip, scale):
         # 게임 로직의 scale(2/4/6)은 절반 크기로 그린다 (1/2/3)
         scale = max(1, int(scale) // 2)
-        n = self.bank.anim_len(anim)
-        if anim in ("death", "victory", "jump", "fall"):
-            frame = min(int(frame), n - 1)
+        try:
+            n = self.bank.anim_len(anim, palette)      # v1.6: 보스 전용 ANIMS (팀 A)
+        except TypeError:
+            try:
+                n = self.bank.anim_len(anim)
+            except KeyError:                           # 이 팔레트에 없는 애니(attack/hurt 등) → idle
+                anim, frame = "idle", 0
+                n = self.bank.anim_len(anim)
+        if anim in ("death", "victory", "jump", "fall", "attack", "attack2", "hurt"):
+            frame = min(int(frame), max(0, n - 1))
         img = self.bank.get(anim, int(frame), palette, flip, scale)
         ax, ay = self.bank.anchor(anim, int(frame), flip, scale, palette=palette)
         return img, ax, ay
@@ -160,6 +191,10 @@ class Renderer:
     def _pool_hide_from(self, pool: list, idx: int):
         for it in pool[idx:]:
             self.cv.itemconfig(it, state="hidden")
+
+    def _elem_color(self, hud: dict, key) -> str:
+        colors = hud.get("element_colors") or {}
+        return colors.get(key) or ELEM_DEFAULT_COLORS.get(key, "#c7d2e0")
 
     # ------------------------------------------------------------ 그리기
     def draw(self, snap: dict) -> None:
@@ -191,57 +226,102 @@ class Renderer:
         cx = self.W // 2
         cy = self.H // 2
         gap = 150
+        n = len(CHAR_KEYS)
         if not self.select_items:
             # 배경 패널
             self.select_items.append(self.cv.create_rectangle(0, 0, 0, 0, fill=HUD_BG, outline=HUD_EDGE, width=2))
             self.select_items.append(self._text2(0, 0, "", size=16, anchor="n"))
-            for i in range(len(CHAR_KEYS)):
+            for i in range(n):
                 box = self.cv.create_rectangle(0, 0, 0, 0, outline="#ffd166", width=3)
                 img = self.cv.create_image(0, 0, anchor="s")
                 name = self._text2(0, 0, "", size=13, anchor="n")
                 trait = self._text2(0, 0, "", size=10, anchor="n", bold=False, fill="#9fc9ff")
-                self.select_items.append((box, img, name, trait))
+                stats = self._text2(0, 0, "", size=9, anchor="n", bold=False, fill="#c7d2e0")
+                self.select_items.append((box, img, name, trait, stats))
             self.select_items.append(self._text2(0, 0, "", size=10, anchor="s", bold=False, fill="#c7d2e0"))
             self.select_items.append(self._text2(0, 0, "", size=11, anchor="s", fill="#ffd166"))
+            # 속성 행: 힌트 + 선택 표시 + 이름 4개
+            elem_hint = self._text2(0, 0, "", size=10, anchor="e", bold=False, fill="#c7d2e0")
+            elem_mark = self.cv.create_rectangle(0, 0, 0, 0, outline="#ffd166", width=2)
+            elem_names = [self._text2(0, 0, "", size=11, anchor="center") for _ in ELEMENT_KEYS]
+            self.select_items.append((elem_hint, elem_mark, elem_names))
 
         panel = self.select_items[0]
-        pw, ph = min(self.W - 40, 640), min(self.H - 20, 300)
-        self.cv.coords(panel, cx - pw // 2, cy - ph // 2, cx + pw // 2, cy + ph // 2)
+        pw, ph = min(self.W - 40, 640), min(self.H - 20, 340)
+        top = cy - ph // 2
+        bottom = cy + ph // 2
+        self.cv.coords(panel, cx - pw // 2, top, cx + pw // 2, bottom)
         self._show(panel)
         title = self.select_items[1]
-        self._set_text2(title, cx, cy - ph // 2 + 10, "캐릭터 선택   ←  →  이동 · Space 시작")
+        self._set_text2(title, cx, top + 8, "캐릭터 선택   ←→ 캐릭터 · ↑↓ 속성 · Space 시작")
         for it in title:
             self._show(it)
-        n = len(CHAR_KEYS)
+        row_y = top + 122                       # 캐릭터 발 위치
         locked = hud.get("char_locked") or [False] * n
+        char_stats = hud.get("char_stats") or [None] * n
         for i in range(n):
-            box, img, name, trait = self.select_items[2 + i]
+            box, img, name, trait, stats = self.select_items[2 + i]
             key = CHAR_KEYS[i]
             x = cx + int((i - (n - 1) / 2) * gap)
             is_locked = i < len(locked) and locked[i]
             # 잠긴 캐릭터는 검은 실루엣
             im, ax, ay = self._sprite("idle", 0, "silhouette" if is_locked else key, False, 2)
             self.cv.itemconfig(img, image=im)
-            self.cv.coords(img, x, cy + 22)
+            self.cv.coords(img, x, row_y)
             self._show(img)
-            self.cv.coords(box, x - 55, cy - 30, x + 55, cy + 76)
+            self.cv.coords(box, x - 55, row_y - 88, x + 55, row_y + 66)
             self.cv.itemconfig(box, state="normal" if i == sel else "hidden")
             cinfo = chars.get(key, {})
+            st = char_stats[i] if i < len(char_stats) else None
             if is_locked:
-                self._set_text2(name, x, cy + 28, "???", fill=LOCKED_FG)
-                self._set_text2(trait, x, cy + 50, "%s스테이지 클리어 시 해금" % cinfo.get("unlock_stage", 5))
+                self._set_text2(name, x, row_y + 4, "???", fill=LOCKED_FG)
+                self._set_text2(trait, x, row_y + 26, "%s스테이지 클리어 시 해금" % cinfo.get("unlock_stage", 5))
+                self._set_text2(stats, x, row_y + 44, "")
             else:
-                self._set_text2(name, x, cy + 28, names[i] if i < len(names) else cinfo.get("name", key), fill=TEXT_FG)
-                self._set_text2(trait, x, cy + 50, "특성: %s" % cinfo.get("trait", ""))
-            for it in name + trait:
+                self._set_text2(name, x, row_y + 4, names[i] if i < len(names) else cinfo.get("name", key), fill=TEXT_FG)
+                self._set_text2(trait, x, row_y + 26, "특성: %s" % cinfo.get("trait", ""))
+                if isinstance(st, dict):
+                    self._set_text2(stats, x, row_y + 44, "민첩 %s · 힘 %s · 지혜 %s"
+                                    % (st.get("agi", "-"), st.get("str", "-"), st.get("int", "-")))
+                else:
+                    self._set_text2(stats, x, row_y + 44, "")
+            for it in name + trait + stats:
                 self._show(it)
+
+        # 속성 행 (↑↓)
+        elem_hint, elem_mark, elem_names = self.select_items[4 + n]
+        enames = hud.get("element_names") or ELEM_DEFAULT_NAMES
+        eidx = hud.get("element_index")
+        if eidx is None:
+            ekey = hud.get("element")
+            eidx = ELEMENT_KEYS.index(ekey) if ekey in ELEMENT_KEYS else 0
+        ey = row_y + 84
+        egap = 96
+        ex0 = cx - int((len(ELEMENT_KEYS) - 1) / 2 * egap) + 30
+        self._set_text2(elem_hint, ex0 - egap // 2 - 10, ey, "↑↓ 속성")
+        for it in elem_hint:
+            self._show(it)
+        for j, key in enumerate(ELEMENT_KEYS):
+            ex = ex0 + j * egap
+            label = enames[j] if j < len(enames) else key
+            color = self._elem_color(hud, key)
+            pair = elem_names[j]
+            if j == eidx:
+                self._set_text2(pair, ex, ey, "◆ %s" % label, fill=color)
+                self.cv.coords(elem_mark, ex - egap // 2 + 8, ey - 13, ex + egap // 2 - 8, ey + 13)
+                self.cv.itemconfig(elem_mark, outline=color, state="normal")
+            else:
+                self._set_text2(pair, ex, ey, label, fill=ELEM_DIM_FG)
+            for it in pair:
+                self._show(it)
+
         foot = self.select_items[2 + n]
-        self._set_text2(foot, cx, cy + ph // 2 - 8,
+        self._set_text2(foot, cx, bottom - 8,
                         "이동 ←→ · 점프 ↑/Z · 사격 Space/X · 스킬 C · 앉기 ↓ · 일시정지 P · 종료 Esc")
         for it in foot:
             self._show(it)
         best = self.select_items[3 + n]
-        self._set_text2(best, cx, cy + ph // 2 - 28, "최고 기록  %s" % format(hud.get("best", 0), ","))
+        self._set_text2(best, cx, bottom - 28, "최고 기록  %s" % format(hud.get("best", 0), ","))
         for it in best:
             self._show(it)
 
@@ -284,6 +364,7 @@ class Renderer:
             d = self.enemy_items.get(eid)
             if d is None:
                 d = {
+                    "ring": self.cv.create_oval(0, 0, 0, 0, outline="", width=2),   # img 보다 먼저 → 아래 층
                     "img": self.cv.create_image(0, 0, anchor="nw"),
                     "label": self._text2(0, 0, "", size=8, anchor="s"),
                     "hpbg": self.cv.create_rectangle(0, 0, 0, 0, fill="#3a1414", outline=""),
@@ -295,12 +376,28 @@ class Renderer:
             y = int(e["y"]) - ay
             self.cv.itemconfig(d["img"], image=im, state="normal")
             self.cv.coords(d["img"], x, y)
-            self._set_text2(d["label"], int(e["x"]), y - 4, e.get("label", ""))
+            is_mid = bool(e.get("mid"))
+            label = e.get("label", "") or ""
+            if is_mid:
+                label = "★ " + label
+            self._set_text2(d["label"], int(e["x"]), y - 4, label, fill=MID_FG if is_mid else TEXT_FG)
             for it in d["label"]:
                 self._show(it)
+            # 속성 링 (발밑)
+            ring = d.get("ring")
+            elem = e.get("element")
+            if ring is not None:
+                if elem and e["anim"] != "death":
+                    rw = max(12, int(im.width() * 0.9))
+                    ex, ey = int(e["x"]), int(e["y"])
+                    self.cv.coords(ring, ex - rw // 2, ey - 4, ex + rw // 2, ey + 4)
+                    self.cv.itemconfig(ring, outline=self._elem_color(snap["hud"], elem), state="normal")
+                else:
+                    self._hide(ring)
             hp, hpm = e.get("hp", 1), e.get("hp_max", 1)
-            show_hp = (hpm > 1) and (e.get("boss") or snap["hud"].get("show_enemy_hp")) and e["anim"] != "death"
-            if show_hp and not e.get("boss"):
+            big = e.get("boss") or is_mid
+            show_hp = (hpm > 1) and (big or snap["hud"].get("show_enemy_hp")) and e["anim"] != "death"
+            if show_hp and not big:
                 bw = 40
                 bx = int(e["x"]) - bw // 2
                 by = y - 20
@@ -313,10 +410,16 @@ class Renderer:
             if eid not in alive:
                 d = self.enemy_items.pop(eid)
                 self.cv.delete(d["img"], d["hpbg"], d["hp"], *d["label"])
+                if d.get("ring") is not None:
+                    self.cv.delete(d["ring"])
 
         # 플레이어
         p = snap["player"]
         if self.player_item is None:
+            # 생성 순서 = 층 순서: 오라(발밑·링) → 실드 → 플레이어 이미지
+            # Windows Tk 는 stipple 채움을 불투명하게 그리므로 오라는 윤곽선만 쓴다
+            self.aura_feet = self.cv.create_oval(0, 0, 0, 0, outline="", width=2)
+            self.aura_ring = self.cv.create_oval(0, 0, 0, 0, outline="", width=2)
             self.shield_item = self.cv.create_oval(0, 0, 0, 0, outline=SHIELD_COLORS[0], width=2)
             self.player_item = self.cv.create_image(0, 0, anchor="nw")
         shield = snap["hud"].get("shield", 0)
@@ -327,6 +430,25 @@ class Renderer:
                 px += int(3 * math.sin(time.perf_counter() * 60))   # 근접 공격 중 흔들기
             self.cv.itemconfig(self.player_item, image=im, state="normal")
             self.cv.coords(self.player_item, px, py)
+            # 속성 오라: 발밑 납작 타원 + 몸 뒤 맥동 링 (플레이어 이미지 아래 층)
+            elem = p.get("element")
+            if elem and p["anim"] != "death":
+                color = self._elem_color(snap["hud"], elem)
+                fx, fy = int(p["x"]), int(p["y"])
+                w, h = im.width(), im.height()
+                fw = max(16, int(w * 1.6))
+                self.cv.coords(self.aura_feet, fx - fw // 2, fy - 7, fx + fw // 2, fy + 7)
+                self.cv.itemconfig(self.aura_feet, outline=color, fill="", state="normal")
+                pulse = 0.5 + 0.5 * math.sin(time.perf_counter() * 4.0)
+                r = int(max(w, h) * 0.45 + 4 + 5 * pulse)
+                rcy = fy - h // 2
+                self.cv.coords(self.aura_ring, fx - r, rcy - r, fx + r, rcy + r)
+                self.cv.itemconfig(self.aura_ring, outline=color, fill="", width=2 + int(pulse * 2), state="normal")
+                self.cv.tag_lower(self.aura_ring, self.player_item)
+                self.cv.tag_lower(self.aura_feet, self.aura_ring)
+            else:
+                self._hide(self.aura_feet)
+                self._hide(self.aura_ring)
             if shield > 0 and p["anim"] != "death":
                 # 실드 남은 수만큼 색이 바뀌는 방어막 (3 파랑 → 1 빨강)
                 cx, w, h = int(p["x"]), im.width(), im.height()
@@ -341,6 +463,8 @@ class Renderer:
         else:
             self._hide(self.player_item)
             self._hide(self.shield_item)
+            self._hide(self.aura_feet)
+            self._hide(self.aura_ring)
 
         # 탄환
         for i, b in enumerate(snap["bullets"]):
@@ -407,6 +531,11 @@ class Renderer:
             kind = fx["kind"]
             if kind == "text":
                 self._set_text2(pair, fx["x"], fx["y"] - int(fx.get("t", 0) * 40), fx.get("text") or "", fill="#ffd166")
+            elif kind == "elem":
+                # 속성 상성 표시: "강!" 주황 / "약" 회색, 위로 떠오름
+                txt = fx.get("text") or ""
+                fill = ELEM_STRONG_FG if "강" in txt else ELEM_WEAK_FG
+                self._set_text2(pair, fx["x"], fx["y"] - 10 - int(fx.get("t", 0) * 40), txt, fill=fill)
             elif kind == "hit":
                 self._set_text2(pair, fx["x"], fx["y"], "✦", fill="#fff28a")
             else:
@@ -423,6 +552,7 @@ class Renderer:
         if not self.hud_items:
             self.hud_items["bg"] = self.cv.create_rectangle(0, 0, 0, 0, fill=HUD_BG, outline=HUD_EDGE, width=1)
             self.hud_items["line"] = self._text2(0, 0, "", size=10)
+            self.hud_items["elem"] = self._text2(0, 0, "", size=10, anchor="nw")
             self.hud_items["banner"] = self._text2(0, 0, "", size=22, anchor="center", fill="#ffd166")
             self.hud_items["sub"] = self._text2(0, 0, "", size=11, anchor="center", bold=False)
             self.hud_items["bossbg"] = self.cv.create_rectangle(0, 0, 0, 0, fill="#3a1414", outline="#7a2a2a")
@@ -444,7 +574,25 @@ class Renderer:
             cd = hud.get("skill_cd") or 0
             line += "  · %s %s" % (hud["skill_label"], "준비(C)" if cd <= 0 else "%d초" % (int(cd) + 1))
         self._set_text2(self.hud_items["line"], 12, 8, line)
-        self.cv.coords(self.hud_items["bg"], 4, 4, 12 + 9 * len(line) + 20, 30)
+        # 현재 속성 이름을 캐릭터 이름 뒤에 속성 색으로 (별도 아이템: 한 줄에 색을 섞을 수 없음)
+        ekey = hud.get("element")
+        ename = hud.get("element_name") or ""
+        right = 12 + 9 * len(line)
+        try:
+            bb = self.cv.bbox(self.hud_items["line"][1])
+            if bb:
+                right = bb[2]
+        except Exception:
+            pass
+        if ekey and ename:
+            self._set_text2(self.hud_items["elem"], right + 2, 8, " · %s" % ename, fill=self._elem_color(hud, ekey))
+            for it in self.hud_items["elem"]:
+                self._show(it)
+            right += 2 + 9 * (len(ename) + 2)
+        else:
+            for it in self.hud_items["elem"]:
+                self._hide(it)
+        self.cv.coords(self.hud_items["bg"], 4, 4, right + 20, 30)
         self._show(self.hud_items["bg"])
         for it in self.hud_items["line"]:
             self._show(it)
@@ -457,7 +605,11 @@ class Renderer:
             self.cv.coords(self.hud_items["bossbg"], bx, by, bx + bw, by + 12)
             self.cv.coords(self.hud_items["boss"], bx, by, bx + int(bw * max(0, hud["boss_hp"]) / hud["boss_hp_max"]), by + 12)
             self._show(self.hud_items["bossbg"]); self._show(self.hud_items["boss"])
-            self._set_text2(self.hud_items["bosstxt"], bx - 4, by + 6, "BOSS")
+            any_mid = any(e.get("mid") for e in snap.get("enemies", []))
+            any_boss = any(e.get("boss") and not e.get("mid") for e in snap.get("enemies", []))
+            mid_only = any_mid and not any_boss
+            self._set_text2(self.hud_items["bosstxt"], bx - 4, by + 6, "★ MID BOSS" if mid_only else "BOSS",
+                            fill=MID_FG if mid_only else TEXT_FG)
             self.cv.itemconfig(self.hud_items["bosstxt"][1], anchor="e")
             self.cv.itemconfig(self.hud_items["bosstxt"][0], anchor="e")
             for it in self.hud_items["bosstxt"]:
@@ -591,6 +743,10 @@ class App:
         # 자주 쓰는 팔레트 미리 생성 (선택 화면 + 1스테이지)
         try:
             self.bank.preload(list(CHAR_KEYS) + ["intern", "staff", "teamlead"], [1])
+        except Exception:
+            pass
+        try:                                   # v1.6 중간 보스 시트 (팀 A). 에셋이 없어도 기동은 계속
+            self.bank.preload(["mai", "choi"], [1])
         except Exception:
             pass
         self.overlay.root.after(16, self.tick)

@@ -9,6 +9,11 @@ Player characters (palette names in ``assets_chars.CHAR_FRAMES``) use their own
 full-colour frame sets from ``assets_chars`` (see tools/import_char_sheets.py)
 instead of the palette-swapped shared frames.  Their frame sizes and anchors
 differ per character, so pass ``palette`` to ``size()`` / ``anchor()``.
+
+Mid bosses (``assets_boss``, keys ``mai`` / ``choi``) are merged into ``CHAR_FRAMES``
+and carry their own animation tables in ``CHAR_ANIMS[palette]`` (idle, run, attack,
+attack2, hurt, death, jump).  Shared anim names a boss lacks fall back through
+``ANIM_ALIAS`` (shoot -> attack, fall -> jump, ...), else ``idle``.
 """
 from __future__ import annotations
 
@@ -16,12 +21,19 @@ import base64
 import struct
 import zlib
 
+import assets_boss
 import assets_chars
 import assets_data
 import assets_extra
 
 CLASSES = assets_data.CLASSES
-CHAR_FRAMES = assets_chars.CHAR_FRAMES
+CHAR_FRAMES = {**assets_chars.CHAR_FRAMES, **assets_boss.BOSS_FRAMES}
+# palettes with a private animation table (mid bosses): palette -> {anim: [frame_id, ...]}
+CHAR_ANIMS: dict[str, dict[str, list[str]]] = {k: dict(v) for k, v in assets_boss.BOSS_ANIMS.items()}
+CHAR_ANIM_FPS: dict[str, dict[str, float]] = {k: dict(v) for k, v in assets_boss.BOSS_ANIM_FPS.items()}
+# shared anim name -> boss anim name when the palette's own table lacks it (anything else -> idle)
+ANIM_ALIAS = {"shoot": "attack", "shoot_run": "run", "fall": "jump", "crouch": "idle",
+              "crouch_shoot": "attack", "victory": "idle"}
 
 _C_OUTLINE = 1
 _C_SHOE = 7
@@ -199,27 +211,41 @@ class SpriteBank:
         self._luts: dict[str, list[bytes]] = {}
 
     # -- lookups ---------------------------------------------------------
-    def _frame_id(self, anim: str, frame: int) -> str:
-        ids = ANIMS[anim]
+    @staticmethod
+    def resolve_anim(anim: str, palette: str | None = None) -> tuple[str, list[str], dict]:
+        """(anim name actually used, frame ids, fps table) for a palette: its own table when it
+        has one (aliasing shared names it lacks), else the shared ANIMS."""
+        own = CHAR_ANIMS.get(palette) if palette else None
+        if own is None:
+            return anim, ANIMS[anim], ANIM_FPS
+        if anim not in own:
+            anim = ANIM_ALIAS.get(anim, "idle")
+            if anim not in own:
+                anim = "idle"
+        return anim, own[anim], CHAR_ANIM_FPS.get(palette, ANIM_FPS)
+
+    def _frame_id(self, anim: str, frame: int, palette: str | None = None) -> str:
+        ids = self.resolve_anim(anim, palette)[1]
         return ids[frame % len(ids)]
 
-    def anim_len(self, anim: str) -> int:
-        return len(ANIMS[anim])
+    def anim_len(self, anim: str, palette: str | None = None) -> int:
+        return len(self.resolve_anim(anim, palette)[1])
 
-    def frame_time(self, anim: str) -> float:
-        fps = ANIM_FPS.get(anim, 8.0)
+    def frame_time(self, anim: str, palette: str | None = None) -> float:
+        name, _ids, fps_table = self.resolve_anim(anim, palette)
+        fps = fps_table.get(name, 8.0)
         return 1.0 / fps if fps > 0 else 0.1
 
     def size(self, anim: str, frame: int, scale: int | None = None,
              palette: str | None = None) -> tuple[int, int]:
         s = self.base_scale if scale is None else int(scale)
-        w, h = frame_data(self._frame_id(anim, frame), palette)[0][:2]
+        w, h = frame_data(self._frame_id(anim, frame, palette), palette)[0][:2]
         return w * s, h * s
 
     def anchor(self, anim: str, frame: int, flip: bool = False,
                scale: int | None = None, palette: str | None = None) -> tuple[int, int]:
         s = self.base_scale if scale is None else int(scale)
-        w, _h, ax, ay = frame_data(self._frame_id(anim, frame), palette)[0][:4]
+        w, _h, ax, ay = frame_data(self._frame_id(anim, frame, palette), palette)[0][:4]
         if flip:
             ax = w - 1 - ax
         return ax * s + s // 2, ay * s + s - 1
@@ -234,7 +260,7 @@ class SpriteBank:
     def get(self, anim: str, frame: int, palette: str, flip: bool = False,
             scale: int | None = None):
         s = self.base_scale if scale is None else int(scale)
-        fid = self._frame_id(anim, frame)
+        fid = self._frame_id(anim, frame, palette)
         key = (fid, palette, bool(flip), s)
         img = self._cache.get(key)
         if img is None:
@@ -247,13 +273,14 @@ class SpriteBank:
 
     def preload(self, palettes: list[str], scales=(2,)) -> None:
         for pal in palettes:
-            for anim, ids in ANIMS.items():
+            for anim, ids in CHAR_ANIMS.get(pal, ANIMS).items():
                 for i in range(len(ids)):
                     for s in scales:
                         for flip in (False, True):
                             self.get(anim, i, pal, flip, s)
 
 
-__all__ = ["PALETTES", "SpriteBank", "CLASSES", "CHAR_FRAMES", "FRAMES", "ANIMS", "ANIM_FPS",
+__all__ = ["PALETTES", "SpriteBank", "CLASSES", "CHAR_FRAMES", "CHAR_ANIMS", "CHAR_ANIM_FPS", "ANIM_ALIAS",
+           "FRAMES", "ANIMS", "ANIM_FPS",
            "shade_color", "palette_lut",
            "encode_png", "render_rgba_rows", "frame_data"]

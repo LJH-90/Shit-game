@@ -198,3 +198,35 @@ Overlay(hotkey=config["hotkey"], on_toggle=...) → SpriteBank(overlay.root) →
 tick: overlay.poll(); world.update(dt); draw(world.snapshot()); root.after(1000//fps, tick)
 ```
 그리기 계층은 Canvas 아이템을 재사용(엔티티 id별 image item 풀, coords/itemconfig 갱신).
+
+---
+
+추가(v1.6, additive): 스탯 · 속성(사신) · 중간 보스. 팀 A(에셋/sprites) · B(game) · C(molgam 렌더러) 병렬. 아래 계약을 바꾸지 말 것, 추가만 허용.
+
+### 스탯 (B)
+- config 캐릭터 항목 `"stats": {"agi": int, "str": int, "int": int}` (민첩/힘/지혜, 1~10, 기준 5). 없으면 기존 `speed/jump/damage` 키를 그대로 쓴다.
+- 파생치(game.py 상수): 이동속도 배율 `1 + 0.06*(agi-5)`, 점프 배율 `1 + 0.04*(agi-5)`, 물리 피해 `max(1, str//3)` (+상점 damage), 마법 피해 `int//3`.
+- 총알·근접·스톰 피해 = 물리 + 마법×속성배율. 물리는 속성 무관.
+
+### 속성 (B, C)
+- `ELEMENT_KEYS = ["cheongryong", "baekho", "jujak", "hyeonmu"]` (청룡·백호·주작·현무). config `"elements": {key: {"name", "color": "#rrggbb", "beats": key}}`, `"element_mult": {"strong": 1.5, "weak": 0.5}`.
+  상성: 청룡→현무→주작→백호→청룡 (앞이 뒤를 이김). 공격 속성이 대상 속성을 이기면 strong, 지면 weak, 그 외 1.0. 대상이 무속성(None)이면 1.0.
+- 플레이어: 선택 화면에서 `up/down` 으로 속성 순환. `save_data()["element"]` 저장·복원.
+- 적: 스폰 시 rank 항목 `"element"`(고정) 또는 `ELEMENT_KEYS` 무작위. 보스도 동일. 적 탄환은 속성 배율 없음(플레이어는 목숨제).
+- snapshot: `player["element"]: key|None`; enemies 각 항목 `"element": key|None`; hud `"element": key`, `"element_name": str`, `"element_names": [str×4]`, `"element_index": int`,
+  `"stats": {"agi","str","int"}`, `"char_stats": [{"agi","str","int"}|None × CHAR_KEYS]`, `"element_colors": {key: "#rrggbb"}`.
+  effects 에 `"kind": "elem"`(속성 피격, text = 배율 표시 "강!"/"약" 또는 None) 추가.
+- 렌더: 플레이어 발밑 타원 오라 + 몸 뒤 반투명 링(색 = element_colors). 적은 발밑 작은 색 링. 선택 화면에 스탯 3줄 + 속성 행(↑↓).
+
+### 중간 보스 (A, B, C)
+- 에셋: `assets_boss.py` (생성물, `tools/import_boss_sheets.py` 가 `적/여자 보스.png`, `적/남자 보스.png` 에서 생성).
+  `BOSS_FRAMES[key][frame_id] = (w, h, ax, ay, rgba)` — CHAR_FRAMES 와 같은 형식, 1x, 오른쪽 보기, 앵커 = 발 중앙(불투명 bbox 하단 중앙).
+  `BOSS_ANIMS[key] = {"idle","run","attack","attack2","hurt","death","jump": [frame_id...]}` (필수 7키), `BOSS_ANIM_FPS[key] = {anim: fps}`.
+  key: `"mai"`(여자 보스), `"choi"`(남자 보스).
+- sprites.py: `CHAR_FRAMES` 에 BOSS_FRAMES 병합. `CHAR_ANIMS[palette] = BOSS_ANIMS[key]` 노출. `SpriteBank.get/size/anchor` 는 팔레트에 전용 ANIMS 가 있으면 그것을 쓰고,
+  없는 anim 은 별칭으로 대체: shoot→attack, shoot_run→run, fall→jump, crouch→idle, crouch_shoot→attack, victory→idle, 그 외→idle.
+  `anim_len(anim, palette=None)` 팔레트 인자 추가(기본값 None = 공용). `frame_time` 도 동일.
+- game: stages.json `"ranks"` 에 `"boss_mai"`, `"boss_choi"` (`"sprite": "mai"|"choi"` → e.palette, `"hit_w"`, `"hit_h"` 논리 히트박스 px, `"boss_scale": 2`, `"pattern": "brawler"`, `"element"`).
+  stages.json `"mid_bosses": [{"rank": "boss_mai", "title": "...", "from_stage": 2}, ...]`. waves ≥ 2 인 스테이지에서 `waves//2` 웨이브를 끝낸 뒤 자격 있는 중간 보스를 스테이지 번호로 번갈아 스폰(phase `"midboss"`), 처치하면 남은 웨이브 진행. 사망 시 중간 보스부터 재시작.
+  brawler 패턴: 접근 → 사거리 안이면 `attack`(근접, 애니 중 접촉 피해) / 원거리 `attack2`(투사체 1발) / 가끔 플레이어 쪽 점프. 피격 시 `hurt` 잠깐.
+  enemies 항목 `"mid": bool` 추가. hud `"boss_hp"` 는 중간 보스에도 표시.
