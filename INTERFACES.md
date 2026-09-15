@@ -68,6 +68,16 @@ class SpriteBank:
 - 문현기 실드: `config.json` 캐릭터 항목 `"shield": N`(기본 0). 적 탄환·보스 돌진 피격 시 실드가 먼저 1 깎이고 `SHIELD_INV` 초 무적, 0이면 목숨 차감. 스테이지 시작·부활 때 가득 채움. 구덩이 낙사는 실드 무시.
   snapshot `hud` 에 `"shield": int`, `"shield_max": int` 추가.
 
+추가(v1.4, additive):
+- `CHAR_KEYS` 에 히든 캐릭터 `"masked"` 추가(4명). config 캐릭터 항목 `"hidden": true`, `"unlock_stage": N` 이면 N스테이지 클리어 전까지 잠김(선택 불가, 실루엣). 해금 목록은 `save_data()["unlocked"]`.
+  `sprites.PALETTES["silhouette"]` — 잠긴 캐릭터 표시용. `assets_chars.CHAR_FRAMES["masked"]` 는 `import_char_sheets.py` 가 공용 프레임을 칠해 생성.
+- 근접 공격: config 캐릭터 항목 `"melee": {range, damage, knockback, cooldown, both_sides, only, text}`. 사격 키를 눌렀을 때 사거리 안에 적이 있으면 사격 대신 근접 타격(밀쳐내기). `only: true` 면 사격하지 않는다.
+- 스킬: 논리 키 `'skill'`(C). config `"storm": {label, cooldown, duration, width, tick, damage}` 캐릭터만 사용. 앞쪽에 영역을 만들어 tick 마다 안의 적에게 피해, 안의 적 탄환 제거.
+  snapshot 최상위 `"zones": [{"kind": "storm", "x", "w", "h", "t", "ttl"}]` (x = 영역 중심, 바닥 기준 높이 h).
+- 상점: `STATES` 에 `"shop"`. stage_clear 2초 뒤 진입. 좌우로 고르고 confirm 으로 구매 / "다음 스테이지". 강화: damage(+1), rate(+20%), shield(+1), life(+1). 가격 = cost × growth^레벨, config `"shop": {key: {label, cost, growth, max}}` 로 조정. 산 점수는 차감.
+  강화는 게임 한 판 동안 유지, `save_data()["upgrades"]` 에 저장되어 '이어하기' 에서 복원.
+- snapshot `hud` 추가 키: `"melee_t"`, `"skill_label"`, `"skill_cd"`, `"char_locked": [bool×CHAR_KEYS]`, `"shop": {"index", "items": [{key,label,cost,level,max,afford}], "msg"} | None`.
+
 ---
 
 ## B. `overlay.py`

@@ -103,6 +103,9 @@ PALETTES: dict[str, dict[str, str]] = {
     "lab3": _pal("#f4f4f4", "#747474"),
     "lab4": _pal("#f4f4f4", "#666666"),
     "lab5": _pal("#f4f4f4", "#5a5a5a", hair="#a4a4a4"),
+    # locked character on the select screen: a solid dark shape (never #010203, the overlay colour key)
+    "silhouette": {name: "#0c0d12" for name in ("outline", "hair", "skin", "shirt", "pants", "gun", "shoe",
+                                                 "white", "fx")},
 }
 
 

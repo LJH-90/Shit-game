@@ -190,6 +190,75 @@ def import_sheet(key: str):
     return frames, outline_px
 
 
+# hidden character "masked": shared class frames painted shirtless, red trunks, black full-face mask
+MASKED_PAL = {1: "#141416", 2: "#101012", 3: "#e6b48c", 4: "#e6b48c", 5: "#c81e1e", 6: "#3c3c40",
+              7: "#141416", 8: "#f4f4f4", 9: "#e02828"}
+MASK_COLOR = "#16161a"
+SHADE_MUL = (0.55, 0.78, 1.0, 1.25)             # same as sprites.SHADE_MUL
+
+
+def _shade(hex_color: str, shade: int):
+    s = hex_color.lstrip("#")
+    m = SHADE_MUL[shade]
+    return tuple(min(255, int(int(s[i:i + 2], 16) * m + 0.5)) for i in (0, 2, 4)) + (255,)
+
+
+def _biggest_blob(w: int, h: int, pred) -> set:
+    seen, best = set(), set()
+    for y in range(h):
+        for x in range(w):
+            if (x, y) in seen or not pred(x, y):
+                continue
+            comp, q = set(), deque([(x, y)])
+            seen.add((x, y))
+            while q:
+                cx, cy = q.popleft()
+                comp.add((cx, cy))
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        nx, ny = cx + dx, cy + dy
+                        if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in seen and pred(nx, ny):
+                            seen.add((nx, ny))
+                            q.append((nx, ny))
+            if len(comp) > len(best):
+                best = comp
+    return best
+
+
+def build_masked():
+    frames_src = {**assets_data.FRAMES, **assets_extra.FRAMES}
+    anims = {**assets_data.ANIMS, **assets_extra.ANIMS}
+    frames, outline_px = {}, 0
+    for fid in dict.fromkeys(f for ids in anims.values() for f in ids):
+        w, h, ax, ay, data = frames_src[fid]
+        cls = [[data[y * w + x] >> 4 for x in range(w)] for y in range(h)]
+        shade = [[min(3, data[y * w + x] & 15) for x in range(w)] for y in range(h)]
+        face = _biggest_blob(w, h, lambda x, y: cls[y][x] == 3 and y < h * 0.4)
+        pants_rows = [y for y in range(h) for x in range(w) if cls[y][x] == 5]
+        cut = min(pants_rows) + 0.4 * (max(pants_rows) - min(pants_rows)) if pants_rows else h
+        pixels = {}
+        for y in range(h):
+            for x in range(w):
+                c = cls[y][x]
+                if not c:
+                    continue
+                if c == 5 and y > cut:
+                    c = 3                       # bare legs below the trunks
+                colour = MASK_COLOR if (x, y) in face else MASKED_PAL.get(c, "#ff00ff")
+                pixels[(x, y)] = _shade(colour, shade[y][x])
+        if face:                                # white eye slits on the mask
+            fy0 = min(y for _, y in face)
+            fh = max(y for _, y in face) - fy0 + 1
+            fx = round(sum(x for x, _ in face) / len(face))
+            ey = fy0 + max(1, fh // 3)
+            for ex in (fx, fx + 2):
+                if (ex, ey) in face:
+                    pixels[(ex, ey)] = (244, 244, 244, 255)
+        frames[fid], n = build_frame(pixels, (ax, ay))
+        outline_px += n
+    return frames, outline_px
+
+
 def b64_lines(data: bytes, width: int = 100) -> str:
     s = base64.b64encode(zlib.compress(data, 9)).decode("ascii")
     return "\n".join(f"    '{s[i:i + width]}'" for i in range(0, len(s), width))
@@ -207,8 +276,8 @@ def main():
              "",
              "CHAR_FRAMES = {}",
              ""]
-    for key in CHARS:
-        frames, outline_px = import_sheet(key)
+    for key in CHARS + ["masked"]:
+        frames, outline_px = build_masked() if key == "masked" else import_sheet(key)
         meta, blob = [], bytearray()
         for fid, (w, h, ax, ay, rgba) in frames.items():
             meta.append((fid, w, h, ax, ay, len(blob)))

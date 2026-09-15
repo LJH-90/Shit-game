@@ -77,6 +77,7 @@ _KEYMAP = {
     "z": ["jump"],
     "space": ["fire", "confirm"],
     "x": ["fire"],
+    "c": ["skill"],
     "return": ["confirm"],
     "kp_enter": ["confirm"],
     "p": ["pause"],

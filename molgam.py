@@ -11,6 +11,7 @@ Overlay(투명 창) + SpriteBank(도트) + World(게임 로직) 을 묶어 그�
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import time
@@ -58,6 +59,8 @@ LASER_COLOR = "#7dffea"
 MISSILE_COLOR = "#ffa94d"
 ITEM_GLYPH = {"laser": "L", "homing": "H", "spread": "S", "rapid": "R", "life": "♥"}
 SHIELD_COLORS = ("#ff8a8a", "#ffd166", "#7dd3fc")   # 실드 1 / 2 / 3
+PAPERS_PER_ZONE = 10                                 # 서류 스톰 한 영역에 날리는 종이 수
+LOCKED_FG = "#7a8494"
 HUD_BG = "#161a22"
 HUD_EDGE = "#3d4a5c"
 
@@ -83,6 +86,9 @@ class Renderer:
         self._last_state = None
         self._banner_items: tuple[int, int] | None = None
         self._boss_items: dict[str, int] = {}
+        self.zone_pool: list[int] = []
+        self.paper_pool: list[int] = []
+        self.shop_ui: dict = {}
         self.W = int(canvas["width"])
         self.H = int(canvas["height"])
 
@@ -144,6 +150,7 @@ class Renderer:
             return
         self._draw_world(snap)
         self._draw_hud(snap)
+        self._draw_shop(snap)
 
     def _on_state_change(self, old, new):
         if new == "select" or old == "select":
@@ -165,7 +172,7 @@ class Renderer:
             # 배경 패널
             self.select_items.append(self.cv.create_rectangle(0, 0, 0, 0, fill=HUD_BG, outline=HUD_EDGE, width=2))
             self.select_items.append(self._text2(0, 0, "", size=16, anchor="n"))
-            for i in range(3):
+            for i in range(len(CHAR_KEYS)):
                 box = self.cv.create_rectangle(0, 0, 0, 0, outline="#ffd166", width=3)
                 img = self.cv.create_image(0, 0, anchor="s")
                 name = self._text2(0, 0, "", size=13, anchor="n")
@@ -182,27 +189,35 @@ class Renderer:
         self._set_text2(title, cx, cy - ph // 2 + 10, "캐릭터 선택   ←  →  이동 · Space 시작")
         for it in title:
             self._show(it)
-        for i in range(3):
+        n = len(CHAR_KEYS)
+        locked = hud.get("char_locked") or [False] * n
+        for i in range(n):
             box, img, name, trait = self.select_items[2 + i]
             key = CHAR_KEYS[i]
-            x = cx + (i - 1) * gap
-            im, ax, ay = self._sprite("idle", 0, key, False, 2)
+            x = cx + int((i - (n - 1) / 2) * gap)
+            is_locked = i < len(locked) and locked[i]
+            # 잠긴 캐릭터는 검은 실루엣
+            im, ax, ay = self._sprite("idle", 0, "silhouette" if is_locked else key, False, 2)
             self.cv.itemconfig(img, image=im)
             self.cv.coords(img, x, cy + 22)
             self._show(img)
             self.cv.coords(box, x - 55, cy - 30, x + 55, cy + 76)
             self.cv.itemconfig(box, state="normal" if i == sel else "hidden")
             cinfo = chars.get(key, {})
-            self._set_text2(name, x, cy + 28, names[i] if i < len(names) else cinfo.get("name", key))
-            self._set_text2(trait, x, cy + 50, "특성: %s" % cinfo.get("trait", ""))
+            if is_locked:
+                self._set_text2(name, x, cy + 28, "???", fill=LOCKED_FG)
+                self._set_text2(trait, x, cy + 50, "%s스테이지 클리어 시 해금" % cinfo.get("unlock_stage", 5))
+            else:
+                self._set_text2(name, x, cy + 28, names[i] if i < len(names) else cinfo.get("name", key), fill=TEXT_FG)
+                self._set_text2(trait, x, cy + 50, "특성: %s" % cinfo.get("trait", ""))
             for it in name + trait:
                 self._show(it)
-        foot = self.select_items[5]
+        foot = self.select_items[2 + n]
         self._set_text2(foot, cx, cy + ph // 2 - 8,
-                        "이동 ←→ · 점프 ↑/Z · 사격 Space/X · 앉기 ↓ · 일시정지 P · 종료 Esc")
+                        "이동 ←→ · 점프 ↑/Z · 사격 Space/X · 스킬 C · 앉기 ↓ · 일시정지 P · 종료 Esc")
         for it in foot:
             self._show(it)
-        best = self.select_items[6]
+        best = self.select_items[3 + n]
         self._set_text2(best, cx, cy + ph // 2 - 28, "최고 기록  %s" % format(hud.get("best", 0), ","))
         for it in best:
             self._show(it)
@@ -285,6 +300,8 @@ class Renderer:
         if p.get("visible", True):
             im, ax, ay = self._sprite(p["anim"], p["frame"], p["palette"], p["flip"], p.get("scale", 2))
             px, py = int(p["x"]) - ax, int(p["y"]) - ay
+            if snap["hud"].get("melee_t", 0) > 0:
+                px += int(3 * math.sin(time.perf_counter() * 60))   # 근접 공격 중 흔들기
             self.cv.itemconfig(self.player_item, image=im, state="normal")
             self.cv.coords(self.player_item, px, py)
             if shield > 0 and p["anim"] != "death":
@@ -318,6 +335,29 @@ class Renderer:
                 fill = PLAYER_BULLET
             self.cv.itemconfig(it, fill=fill, state="normal")
         self._pool_hide_from(self.bullet_pool, len(snap["bullets"]))
+
+        # 서류 스톰 영역: 점선 테두리 + 날리는 서류 조각
+        zones = snap.get("zones", [])
+        gy = snap["ground_y"]
+        now = time.perf_counter()
+        pi = 0
+        for zi, z in enumerate(zones):
+            rect = self._pool_get(self.zone_pool, lambda: self.cv.create_rectangle(
+                0, 0, 0, 0, outline="#9fd3ff", width=1, dash=(3, 3)), zi)
+            zx0 = z["x"] - z["w"] / 2
+            self.cv.coords(rect, zx0, gy - z["h"], zx0 + z["w"], gy)
+            self._show(rect)
+            for k in range(PAPERS_PER_ZONE):
+                paper = self._pool_get(self.paper_pool, lambda: self.cv.create_rectangle(
+                    0, 0, 0, 0, fill="#f4f4f4", outline="#141416"), pi)
+                pi += 1
+                px = zx0 + (k * 37 + now * (60 + 11 * k)) % max(1, z["w"] - 8)
+                py = gy - 8 - (k * 23 + now * (90 + 7 * k)) % max(1, z["h"] - 12)
+                pw, ph = (7, 5) if (k + int(now * 8)) % 2 else (5, 7)
+                self.cv.coords(paper, px, py, px + pw, py + ph)
+                self._show(paper)
+        self._pool_hide_from(self.zone_pool, len(zones))
+        self._pool_hide_from(self.paper_pool, pi)
 
         # 아이템 (무기/1UP)
         items = snap.get("items", [])
@@ -377,6 +417,9 @@ class Renderer:
             left = hud.get("weapon_left")
             unit = "발" if hud["weapon"] == "homing" else "초"
             line += "  · %s %s%s" % (hud.get("weapon_label") or hud["weapon"], left, unit)
+        if hud.get("skill_label"):
+            cd = hud.get("skill_cd") or 0
+            line += "  · %s %s" % (hud["skill_label"], "준비(C)" if cd <= 0 else "%d초" % (int(cd) + 1))
         self._set_text2(self.hud_items["line"], 12, 8, line)
         self.cv.coords(self.hud_items["bg"], 4, 4, 12 + 9 * len(line) + 20, 30)
         self._show(self.hud_items["bg"])
@@ -424,6 +467,63 @@ class Renderer:
         else:
             for it in self.hud_items["banner"] + self.hud_items["sub"]:
                 self._hide(it)
+
+
+    # --- 상점 (스테이지 클리어 후)
+    def _shop_all_items(self) -> list:
+        ui = self.shop_ui
+        items = [ui["panel"], *ui["title"], *ui["score"], *ui["msg"], *ui["help"]]
+        for box, label, sub in ui["rows"]:
+            items += [box, *label, *sub]
+        return items
+
+    def _draw_shop(self, snap):
+        shop = snap["hud"].get("shop")
+        if not shop:
+            if self.shop_ui:
+                for it in self._shop_all_items():
+                    self._hide(it)
+            return
+        rows = shop["items"]
+        if not self.shop_ui:
+            self.shop_ui = {
+                "panel": self.cv.create_rectangle(0, 0, 0, 0, fill=HUD_BG, outline=HUD_EDGE, width=2),
+                "title": self._text2(0, 0, "", size=14, anchor="n"),
+                "score": self._text2(0, 0, "", size=11, anchor="n", fill="#ffd166"),
+                "rows": [(self.cv.create_rectangle(0, 0, 0, 0, outline="#ffd166", width=2),
+                          self._text2(0, 0, "", size=11, anchor="n"),
+                          self._text2(0, 0, "", size=9, anchor="n", bold=False, fill="#9fc9ff"))
+                         for _ in rows],
+                "msg": self._text2(0, 0, "", size=10, anchor="s", fill="#ffb3b3"),
+                "help": self._text2(0, 0, "", size=9, anchor="s", bold=False, fill="#c7d2e0"),
+            }
+        ui = self.shop_ui
+        cx, cy = self.W // 2, self.H // 2
+        pw, ph = min(self.W - 40, 720), min(self.H - 20, 230)
+        self.cv.coords(ui["panel"], cx - pw // 2, cy - ph // 2, cx + pw // 2, cy + ph // 2)
+        self._set_text2(ui["title"], cx, cy - ph // 2 + 10, "상점 — 점수로 강화 (쓴 점수는 기록에서 빠짐)")
+        self._set_text2(ui["score"], cx, cy - ph // 2 + 34, "보유 점수 %s" % format(snap["hud"]["score"], ","))
+        cell = (pw - 40) // len(rows)
+        for i, (row, (box, label, sub)) in enumerate(zip(rows, ui["rows"])):
+            x = cx - pw // 2 + 20 + cell * i + cell // 2
+            self.cv.coords(box, x - cell // 2 + 6, cy - 22, x + cell // 2 - 6, cy + 42)
+            self.cv.itemconfig(box, state="normal" if i == shop["index"] else "hidden")
+            fg = TEXT_FG if row["afford"] else LOCKED_FG
+            self._set_text2(label, x, cy - 12, row["label"], fill=fg)
+            if row["key"] == "next":
+                info = ""
+            elif row["level"] >= row["max"]:
+                info = "최대 (Lv%d)" % row["level"]
+            else:
+                info = "%s점 · Lv%d/%d" % (format(row["cost"], ","), row["level"], row["max"])
+            self._set_text2(sub, x, cy + 12, info)
+        self._set_text2(ui["msg"], cx, cy + ph // 2 - 26, shop.get("msg") or "")
+        self._set_text2(ui["help"], cx, cy + ph // 2 - 8, "← → 선택 · Space 구매 / 다음 스테이지")
+        unselected = {box for j, (box, _l, _s) in enumerate(ui["rows"]) if j != shop["index"]}
+        for it in self._shop_all_items():
+            if it not in unselected:
+                self._show(it)
+            self.cv.tag_raise(it)                 # 월드 아이템보다 위
 
 
 class App:

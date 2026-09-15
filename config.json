@@ -18,7 +18,16 @@
       "fire_rate": 1.0,
       "jump": 1.0,
       "pierce": false,
-      "shield": 3
+      "shield": 3,
+      "melee": {
+        "range": 45,
+        "damage": 4,
+        "knockback": 260,
+        "cooldown": 0.35,
+        "both_sides": false,
+        "only": false,
+        "text": "퍽!"
+      }
     },
     "dongil": {
       "name": "석동일",
@@ -28,7 +37,35 @@
       "fire_rate": 1.0,
       "jump": 1.0,
       "pierce": true,
-      "show_enemy_hp": true
+      "show_enemy_hp": true,
+      "storm": {
+        "label": "서류 스톰",
+        "cooldown": 8.0,
+        "duration": 3.0,
+        "width": 160,
+        "tick": 0.4,
+        "damage": 1
+      }
+    },
+    "masked": {
+      "name": "복면사원",
+      "trait": "허리치기",
+      "damage": 1.0,
+      "speed": 1.2,
+      "fire_rate": 1.0,
+      "jump": 1.1,
+      "pierce": false,
+      "hidden": true,
+      "unlock_stage": 5,
+      "melee": {
+        "range": 60,
+        "damage": 5,
+        "knockback": 360,
+        "cooldown": 0.4,
+        "both_sides": true,
+        "only": true,
+        "text": "흔들!"
+      }
     }
   },
   "lives": 3,

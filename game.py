@@ -16,7 +16,7 @@ import os
 import random
 import sys
 
-CHAR_KEYS = ["jaehwi", "hyunki", "dongil"]
+CHAR_KEYS = ["jaehwi", "hyunki", "dongil", "masked"]   # "masked" is hidden until unlocked
 
 # ---------------------------------------------------------------- constants
 GRAVITY = 1800.0
@@ -28,6 +28,18 @@ FIRE_RATE = 6.0                 # player shots / s (base)
 PLAYER_W, PLAYER_H = 12, 28   # 그리기 배율 1x 스프라이트(약 14x30px) 기준 히트박스
 ENEMY_W, ENEMY_H = 12, 28
 SHIELD_INV = 0.6                # s of invincibility after a shield charge absorbs a hit
+MELEE_CD = 0.35                 # s between melee strikes (config "melee.cooldown" overrides)
+MELEE_KNOCK_BOSS = 0.3          # bosses are shoved this fraction of the knockback
+ZONE_H = 120                    # height of a skill zone above the ground
+MAX_ZONES = 3
+DEFAULT_UNLOCK_STAGE = 5
+DEFAULT_SHOP = {                # key: [label, base cost, cost growth per level, max level]
+    "damage": ["공격력 +1", 3000, 1.7, 5],
+    "rate": ["연사 +20%", 2500, 1.6, 5],
+    "shield": ["실드 +1", 4000, 1.8, 3],
+    "life": ["목숨 +1", 5000, 2.0, 3],
+}
+SHOP_ORDER = ("damage", "rate", "shield", "life", "next")
 MAX_ENEMIES, MAX_BULLETS, MAX_EFFECTS = 14, 40, 30
 DASH_SPEED = 520.0
 STAMP_SPEED = 450.0
@@ -117,11 +129,13 @@ class _Ent:
 
 class Player(_Ent):
     __slots__ = ("crouch", "fire_cd", "shoot_t", "inv_t", "dead", "death_t", "drop_t", "jump_buf", "on_platform",
-                 "weapon", "weapon_t", "ammo", "shield")
+                 "weapon", "weapon_t", "ammo", "shield", "skill_cd", "melee_t")
 
     def __init__(self):
         super().__init__()
         self.shield = 0
+        self.skill_cd = 0.0
+        self.melee_t = 0.0
         self.weapon = "normal"
         self.weapon_t = 0.0
         self.ammo = 0
@@ -229,7 +243,7 @@ class Item:
 class World:
     """See INTERFACES.md section C."""
 
-    STATES = ("select", "play", "stage_clear", "game_over", "paused", "continue")
+    STATES = ("select", "play", "stage_clear", "shop", "game_over", "paused", "continue")
 
     def __init__(self, stages: dict, config: dict, save: dict, width: int, height: int, seed: int | None = None):
         self.stages = stages or {}
@@ -274,8 +288,22 @@ class World:
             if sc in (k, self.chars[k]["name"]):
                 self.select_index = i
         self.cont_index = 0
+        self.unlocked: set[str] = {k for k in (save.get("unlocked") or []) if k in CHAR_KEYS}
+        self.saved_upgrades = dict(save.get("upgrades") or {})
+        self.shop_items = {k: list(v) for k, v in DEFAULT_SHOP.items()}
+        for k, v in (self.config.get("shop") or {}).items():
+            if k in self.shop_items and isinstance(v, dict):
+                row = self.shop_items[k]
+                row[0] = str(v.get("label", row[0]))
+                row[1] = int(v.get("cost", row[1]))
+                row[2] = float(v.get("growth", row[2]))
+                row[3] = int(v.get("max", row[3]))
 
         # --- runtime
+        self.upgrades = {k: 0 for k in self.shop_items}
+        self.zones: list[dict] = []
+        self.shop_index = 0
+        self.shop_msg = ""
         self.state = "select"
         self.state_t = 0.0
         self.keys: set[str] = set()
@@ -354,7 +382,9 @@ class World:
                 self.select_index = (self.select_index + 1) % len(CHAR_KEYS)
                 self._refresh_select_banner()
             elif key in ("confirm", "fire") and self.state_t >= CONFIRM_GUARD:
-                if self.continue_stage and self.continue_stage > 1:
+                if self._char_locked(self.char_key):
+                    self._refresh_select_banner()          # locked: stay on the select screen
+                elif self.continue_stage and self.continue_stage > 1:
                     self.cont_index = 0
                     self._set_state("continue")
                     self._refresh_continue_banner()
@@ -366,7 +396,7 @@ class World:
                 self._refresh_continue_banner()
             elif key in ("confirm", "fire") and self.state_t >= CONFIRM_GUARD:
                 if self.cont_index == 0 and self.continue_stage:
-                    self._start_game(self.continue_stage)
+                    self._start_game(self.continue_stage, keep_upgrades=True)
                 else:
                     self._start_game(1)
         elif st == "play":
@@ -374,6 +404,17 @@ class World:
                 self._set_state("paused")
             elif key in ("jump", "up"):
                 self.player.jump_buf = 0.12
+            elif key == "skill":
+                self._use_skill()
+        elif st == "shop":
+            if key in ("left", "sel_left"):
+                self.shop_index = (self.shop_index - 1) % len(SHOP_ORDER)
+                self.shop_msg = ""
+            elif key in ("right", "sel_right"):
+                self.shop_index = (self.shop_index + 1) % len(SHOP_ORDER)
+                self.shop_msg = ""
+            elif key in ("confirm", "fire") and self.state_t >= CONFIRM_GUARD:
+                self._shop_select()
         elif st == "paused":
             if key == "pause":
                 self._set_state("play")
@@ -400,8 +441,8 @@ class World:
             self.player.tick_anim(dt)
             self._update_effects(dt)
             if self.state_t >= 2.0:
-                self._start_stage(self.stage_no + 1)
-        elif st == "game_over":
+                self._open_shop()
+        elif st in ("game_over", "shop"):
             self._update_effects(dt)
         # select / continue / paused: nothing moves
 
@@ -423,6 +464,8 @@ class World:
             "bullets": [{"x": b.x, "y": b.y, "w": b.w, "h": b.h, "owner": b.owner, "kind": b.kind}
                         for b in self.bullets],
             "items": [{"x": it.x, "y": it.y, "kind": it.kind, "t": it.t} for it in self.items],
+            "zones": [{"kind": z["kind"], "x": z["x"], "w": z["w"], "h": ZONE_H, "t": z["t"], "ttl": z["ttl"]}
+                      for z in self.zones],
             "effects": [{"kind": f["kind"], "x": f["x"], "y": f["y"], "t": f["t"], "text": f["text"]}
                         for f in self.effects],
             "hud": {"lives": self.lives, "score": self.score, "best": self.best,
@@ -436,6 +479,11 @@ class World:
                     "continue_stage": self.continue_stage,
                     "show_enemy_hp": bool(self.char.get("show_enemy_hp", False)),
                     "shield": p.shield, "shield_max": self._shield_max(),
+                    "melee_t": round(p.melee_t, 3),
+                    "skill_label": (self.char["storm"].get("label", "서류 스톰") if self.char.get("storm") else None),
+                    "skill_cd": (round(max(0.0, p.skill_cd), 2) if self.char.get("storm") else None),
+                    "char_locked": [self._char_locked(k) for k in CHAR_KEYS],
+                    "shop": self._shop_view() if self.state == "shop" else None,
                     "weapon": (p.weapon if p.weapon != "normal" else None),
                     "weapon_label": ITEM_LABEL.get(p.weapon),
                     "weapon_left": (p.ammo if p.weapon == "homing"
@@ -444,7 +492,8 @@ class World:
 
     def save_data(self) -> dict:
         return {"stage": int(self.save_stage), "best": int(self.best), "char": self.char_key,
-                "char_name": self.char["name"], "hotkey": self.config.get("hotkey", "shift+0")}
+                "char_name": self.char["name"], "hotkey": self.config.get("hotkey", "shift+0"),
+                "upgrades": dict(self.saved_upgrades), "unlocked": sorted(self.unlocked)}
 
     # ------------------------------------------------------------ debug helpers (selftest)
     def _debug_kill_all(self) -> int:
@@ -471,7 +520,19 @@ class World:
 
     def _refresh_select_banner(self):
         c = self.char
-        self._set_banner(f"◀ {c['name']} ({c.get('trait', '')}) ▶")
+        if self._char_locked(self.char_key):
+            self._set_banner(f"◀ ??? ({self._unlock_stage(self.char_key)}스테이지 클리어 시 해금) ▶")
+        else:
+            self._set_banner(f"◀ {c['name']} ({c.get('trait', '')}) ▶")
+
+    def _char_hidden(self, key: str) -> bool:
+        return bool(self.chars[key].get("hidden", False))
+
+    def _unlock_stage(self, key: str) -> int:
+        return int(self.chars[key].get("unlock_stage", DEFAULT_UNLOCK_STAGE))
+
+    def _char_locked(self, key: str) -> bool:
+        return self._char_hidden(key) and key not in self.unlocked
 
     def _refresh_continue_banner(self):
         cs = self.continue_stage or 1
@@ -580,9 +641,14 @@ class World:
         return False
 
     # ------------------------------------------------------------ game flow
-    def _start_game(self, stage_no: int):
+    def _start_game(self, stage_no: int, keep_upgrades: bool = False):
         self.lives = self.lives_max
         self.score = 0
+        self.upgrades = {k: 0 for k in self.shop_items}
+        if keep_upgrades:                       # "continue": upgrades bought before reaching that stage
+            for k, v in self.saved_upgrades.items():
+                if k in self.upgrades:
+                    self.upgrades[k] = max(0, min(int(v), self.shop_items[k][3]))
         self._start_stage(stage_no)
 
     def _start_stage(self, n: int):
@@ -595,6 +661,8 @@ class World:
         self.bullets.clear()
         self.items.clear()
         self.effects.clear()
+        self.zones.clear()
+        self.saved_upgrades = dict(self.upgrades)
         self.boss_ref = None
         self.wave_index = 0
         self.boss_index = 0
@@ -622,6 +690,8 @@ class World:
         p.death_t = 0.0
         p.inv_t = invincible
         p.shield = self._shield_max()      # refilled every stage start and respawn
+        p.skill_cd = 0.0
+        p.melee_t = 0.0
         p.fire_cd = 0.0
         p.shoot_t = 0.0
         p.jump_buf = 0.0
@@ -717,6 +787,7 @@ class World:
         for e in self.enemies:
             self._update_enemy(e, dt)
         self._update_bullets(dt)
+        self._update_zones(dt)
         self._update_items(dt)
         self._collide()
         self._cleanup()
@@ -743,6 +814,8 @@ class World:
         p.drop_t = max(0.0, p.drop_t - dt)
         p.jump_buf = max(0.0, p.jump_buf - dt)
         p.shoot_t = max(0.0, p.shoot_t - dt)
+        p.skill_cd = max(0.0, p.skill_cd - dt)
+        p.melee_t = max(0.0, p.melee_t - dt)
         c = self.char
         move = (1 if "right" in keys else 0) - (1 if "left" in keys else 0)
         p.crouch = ("down" in keys) and p.on_ground
@@ -794,8 +867,13 @@ class World:
                 p.weapon, p.weapon_t = "normal", 0.0
         # firing
         p.fire_cd -= dt
-        if "fire" in keys and p.fire_cd <= 0 and len(self.bullets) < MAX_BULLETS:
-            self._player_fire(p, c)
+        melee = c.get("melee") or None
+        if "fire" in keys and p.fire_cd <= 0:
+            targets = self._melee_targets(p, melee) if melee else []
+            if targets or (melee and melee.get("only")):
+                self._player_melee(p, melee, targets)       # enemy in reach (or melee-only character)
+            elif len(self.bullets) < MAX_BULLETS:
+                self._player_fire(p, c)
         elif "fire" not in keys and p.fire_cd < 0:
             p.fire_cd = 0.0
         # anim
@@ -813,9 +891,9 @@ class World:
         """Spawn bullets for the current weapon. Gun height is relative to the hitbox (PLAYER_H)."""
         gun_y = p.y - (PLAYER_H * 0.35 if p.crouch else PLAYER_H * 0.62)
         gx = p.x + p.facing * (PLAYER_W / 2 + 6)
-        dmg = max(1, int(round(float(c.get("damage", 1.0)))))
+        dmg = max(1, int(round(float(c.get("damage", 1.0))))) + self.upgrades.get("damage", 0)
         pierce = bool(c.get("pierce", False))
-        rate = FIRE_RATE * float(c.get("fire_rate", 1.0))
+        rate = FIRE_RATE * float(c.get("fire_rate", 1.0)) * (1.0 + 0.2 * self.upgrades.get("rate", 0))
         w = p.weapon
         if w == "laser":
             edge = self.width + 40 if p.facing > 0 else -40
@@ -843,6 +921,119 @@ class World:
                 rate *= 2.0
         p.fire_cd = 1.0 / max(0.5, rate)
         p.shoot_t = 0.25
+
+    # ------------------------------------------------------------ melee / skill
+    def _melee_targets(self, p: Player, melee: dict) -> list:
+        reach = float(melee.get("range", 45))
+        both = bool(melee.get("both_sides", False))
+        head = p.y - PLAYER_H - 6
+        hits = []
+        for e in self.enemies:
+            if not e.alive:
+                continue
+            dx = e.x - p.x
+            if abs(dx) > reach + e.w / 2:
+                continue
+            if not both and dx * p.facing < -e.w / 2:
+                continue                        # behind the player
+            if e.y - e.h > p.y + 4 or e.y < head:
+                continue                        # not at the player's height
+            hits.append(e)
+        return hits
+
+    def _player_melee(self, p: Player, melee: dict, targets: list):
+        dmg = max(1, int(melee.get("damage", 4))) + self.upgrades.get("damage", 0)
+        knock = float(melee.get("knockback", 260)) * 0.12
+        for e in targets:
+            d = 1 if e.x >= p.x else -1
+            e.x += d * knock * (MELEE_KNOCK_BOSS if e.boss else 1.0)
+            self._effect("hit", e.x, e.y - e.h * 0.6)
+            self._damage_enemy(e, dmg)
+        if targets:
+            self._effect("text", p.x + p.facing * 20, p.y - PLAYER_H - 8, text=str(melee.get("text", "퍽!")))
+        p.fire_cd = float(melee.get("cooldown", MELEE_CD))
+        p.shoot_t = 0.2
+        p.melee_t = 0.25
+
+    def _use_skill(self):
+        p = self.player
+        storm = self.char.get("storm")
+        if not storm or p.dead or p.skill_cd > 0 or len(self.zones) >= MAX_ZONES:
+            return
+        w = float(storm.get("width", 160))
+        dur = float(storm.get("duration", 3.0))
+        self.zones.append({"kind": "storm", "x": p.x + p.facing * (w / 2 + 10), "w": w, "t": dur, "ttl": dur,
+                           "tick": 0.0, "every": float(storm.get("tick", 0.4)),
+                           "dmg": max(1, int(storm.get("damage", 1))) + self.upgrades.get("damage", 0)})
+        p.skill_cd = float(storm.get("cooldown", 8.0))
+        p.shoot_t = 0.3
+        self._effect("text", p.x, p.y - PLAYER_H - 12, text=str(storm.get("label", "서류 스톰")))
+
+    def _update_zones(self, dt: float):
+        """Paper storm: removes enemy bullets inside and hits every enemy inside each tick."""
+        if not self.zones:
+            return
+        alive = []
+        for z in self.zones:
+            z["t"] -= dt
+            if z["t"] <= 0:
+                continue
+            box = (z["x"] - z["w"] / 2, self.ground_y - ZONE_H, z["x"] + z["w"] / 2, self.ground_y + 4)
+            for b in self.bullets:
+                if b.owner == "enemy" and not b.dead and _overlap(b.box(), box):
+                    b.dead = True
+            z["tick"] -= dt
+            if z["tick"] <= 0:
+                z["tick"] = z["every"]
+                for e in self.enemies:
+                    if e.alive and _overlap(e.box(), box):
+                        self._effect("hit", e.x, e.y - e.h * 0.6)
+                        self._damage_enemy(e, z["dmg"])
+            alive.append(z)
+        self.zones = alive
+
+    # ------------------------------------------------------------ shop
+    def _open_shop(self):
+        self.shop_index = 0
+        self.shop_msg = ""
+        self._set_banner(None)
+        self._set_state("shop")
+
+    def _shop_cost(self, key: str) -> int:
+        _label, base, growth, _mx = self.shop_items[key]
+        return int(round(base * growth ** self.upgrades.get(key, 0), -1))
+
+    def _shop_select(self):
+        key = SHOP_ORDER[self.shop_index % len(SHOP_ORDER)]
+        if key == "next":
+            self._start_stage(self.stage_no + 1)
+            return
+        label, _base, _growth, mx = self.shop_items[key]
+        if self.upgrades[key] >= mx:
+            self.shop_msg = f"{label}: 최대 단계"
+            return
+        cost = self._shop_cost(key)
+        if self.score < cost:
+            self.shop_msg = f"점수 부족 ({cost - self.score:,}점 모자람)"
+            return
+        self.score -= cost                      # spent score never comes back: upgrades cost the high score
+        self.upgrades[key] += 1
+        if key == "life":
+            self.lives = min(9, self.lives + 1)
+        self.shop_msg = f"{label} 구매 (Lv{self.upgrades[key]})"
+
+    def _shop_view(self) -> dict:
+        rows = []
+        for key in SHOP_ORDER:
+            if key == "next":
+                rows.append({"key": key, "label": "다음 스테이지 ▶", "cost": 0, "level": 0, "max": 0, "afford": True})
+                continue
+            label, _base, _growth, mx = self.shop_items[key]
+            lv = self.upgrades.get(key, 0)
+            cost = self._shop_cost(key)
+            rows.append({"key": key, "label": label, "cost": cost, "level": lv, "max": mx,
+                         "afford": lv < mx and self.score >= cost})
+        return {"index": self.shop_index % len(SHOP_ORDER), "items": rows, "msg": self.shop_msg}
 
     def _drop_item(self, e: Enemy):
         if len(self.items) >= MAX_ITEMS:
@@ -1181,7 +1372,7 @@ class World:
                     o.set_anim("death")
 
     def _shield_max(self) -> int:
-        return max(0, int(self.char.get("shield", 0) or 0))
+        return max(0, int(self.char.get("shield", 0) or 0) + self.upgrades.get("shield", 0))
 
     def _hit_player(self):
         """Enemy bullet / boss contact. A shield charge absorbs the hit before a life is lost."""
@@ -1224,6 +1415,7 @@ class World:
         self.bullets.clear()
         self.items.clear()
         self.effects.clear()
+        self.zones.clear()
         self.boss_ref = None
         self._reset_player(invincible=2.0)
         if self.phase == "boss":
@@ -1277,7 +1469,12 @@ class World:
         self.pending.clear()
         self.player.hold_frame = (max(0, int(self.anim_lens.get("victory", 6)) - 1) if self.anim_lens else None)
         self.player.set_anim("victory")
-        self._set_banner("STAGE CLEAR")
+        banner = "STAGE CLEAR"
+        for k in CHAR_KEYS:
+            if self._char_locked(k) and self.stage_no >= self._unlock_stage(k):
+                self.unlocked.add(k)
+                banner = f"STAGE CLEAR · {self.chars[k]['name']} 해금!"
+        self._set_banner(banner)
         self._set_state("stage_clear")
 
     # ------------------------------------------------------------ effects
@@ -1299,7 +1496,9 @@ class World:
 
 
 # ---------------------------------------------------------------- selftest
-SNAP_KEYS = {"state", "ground_y", "platforms", "pits", "player", "enemies", "bullets", "items", "effects", "hud"}
+SNAP_KEYS = {"state", "ground_y", "platforms", "pits", "player", "enemies", "bullets", "items", "zones", "effects",
+             "hud"}
+ZONE_KEYS = {"kind", "x", "w", "h", "t", "ttl"}
 PLAYER_KEYS = {"x", "y", "anim", "frame", "flip", "palette", "scale", "invincible", "visible"}
 ENEMY_KEYS = {"id", "x", "y", "anim", "frame", "flip", "palette", "scale", "label", "hp", "hp_max", "boss"}
 BULLET_KEYS = {"x", "y", "w", "h", "owner", "kind"}
@@ -1307,8 +1506,10 @@ ITEM_KEYS = {"x", "y", "kind", "t"}
 EFFECT_KEYS = {"kind", "x", "y", "t", "text"}
 HUD_KEYS = {"lives", "score", "best", "stage_no", "stage_name", "difficulty", "boss_hp", "boss_hp_max",
             "banner", "banner_t", "char_name", "select_index", "char_names", "continue_stage", "show_enemy_hp",
-            "weapon", "weapon_label", "weapon_left", "shield", "shield_max"}
-ALL_KEYS = {"left", "right", "up", "down", "jump", "fire", "pause", "quit", "confirm", "sel_left", "sel_right"}
+            "weapon", "weapon_label", "weapon_left", "shield", "shield_max", "melee_t", "skill_label", "skill_cd",
+            "char_locked", "shop"}
+ALL_KEYS = {"left", "right", "up", "down", "jump", "fire", "pause", "quit", "confirm", "sel_left", "sel_right",
+            "skill"}
 
 
 def _check_snapshot(s: dict):
@@ -1324,6 +1525,10 @@ def _check_snapshot(s: dict):
     for it in s["items"]:
         assert set(it.keys()) == ITEM_KEYS and it["kind"] in ITEM_KINDS
     assert len(s["items"]) <= MAX_ITEMS
+    for z in s["zones"]:
+        assert set(z.keys()) == ZONE_KEYS and z["kind"] == "storm"
+    assert len(s["hud"]["char_locked"]) == len(CHAR_KEYS)
+    assert (s["hud"]["shop"] is not None) == (s["state"] == "shop")
     for f in s["effects"]:
         assert set(f.keys()) == EFFECT_KEYS and f["kind"] in ("hit", "spark", "text")
     assert s["hud"]["difficulty"] in ("easy", "normal", "hard")
@@ -1387,6 +1592,10 @@ def selftest() -> int:
             w._debug_kill_all()
         if w.state == "stage_clear":
             assert snap["hud"]["banner"] == "STAGE CLEAR"
+        if w.state == "shop":                   # leave the shop without buying
+            w.shop_index = len(SHOP_ORDER) - 1
+            w.state_t = 1.0
+            w.key_down("confirm"); w.key_up("confirm")
     assert saw_boss, "boss never appeared"
     assert w.state == "play" and w.stage_no == 2, (w.state, w.stage_no, ticks)
     assert abs(w.player.x - start_x) < 1 and not w.enemies and not w.bullets
@@ -1573,6 +1782,111 @@ def selftest() -> int:
     _shoot_player(jw)
     assert jw.player.dead, "characters without a shield die on the first hit"
     print("PASS 7: hyunki shield absorbs 3 hits, 4th costs a life, refilled on respawn")
+
+    def _dummy(world, rank, x, hp=20):
+        e = world._make_enemy(rank, x)
+        e.hp = e.hp_max = hp
+        e.speed = 0.0
+        e.fire_rate = 0.0
+        e.fire_cd = e.jump_cd = 99.0
+        world.enemies.append(e)
+        return e
+
+    def _quiet(char, seed):
+        qw = World(stages, config, {"char": char, "unlocked": ["masked"]}, 1920, 340, seed=seed)
+        assert qw.char_key == char
+        qw._start_game(1)
+        _run(qw, 1.3)
+        qw.enemies.clear(); qw.pending.clear(); qw.bullets.clear()
+        qw.player.x, qw.player.facing = 600.0, 1
+        return qw
+
+    # 8) melee: hyunki strikes an adjacent enemy instead of shooting; masked hits behind and never shoots
+    mw = _quiet("hyunki", 31)
+    near = _dummy(mw, "teamlead", mw.player.x + 30)
+    mw.key_down("fire"); mw.update(DT); mw.key_up("fire")
+    melee_dmg = int(config["characters"]["hyunki"]["melee"]["damage"])
+    assert near.hp == 20 - melee_dmg, near.hp
+    assert not any(b.owner == "player" for b in mw.bullets), "melee must replace the shot"
+    assert near.x > mw.player.x + 30, "melee must shove the enemy"
+    mw.enemies.clear()
+    _run(mw, 0.5)
+    mw.key_down("fire"); mw.update(DT); mw.key_up("fire")
+    assert any(b.owner == "player" for b in mw.bullets), "no enemy in reach -> normal shot"
+    kw = _quiet("masked", 32)
+    behind = _dummy(kw, "teamlead", kw.player.x - 40)
+    kw.key_down("fire"); kw.update(DT)
+    assert behind.hp < 20 and not kw.bullets, (behind.hp, len(kw.bullets))
+    kw.enemies.clear()
+    _run(kw, 0.6)
+    assert not any(b.owner == "player" for b in kw.bullets), "melee-only character never shoots"
+    print("PASS 8: melee strikes in reach (hyunki front, masked both sides), shots otherwise")
+
+    # 9) paper storm: dongil zone damages enemies inside, clears enemy bullets, has a cooldown
+    dw = _quiet("dongil", 33)
+    target = _dummy(dw, "teamlead", 700.0)
+    dw.key_down("skill"); dw.key_up("skill")
+    assert len(dw.zones) == 1 and dw.player.skill_cd > 0
+    dw.key_down("skill"); dw.key_up("skill")
+    assert len(dw.zones) == 1, "skill is on cooldown"
+    dw.bullets.append(Bullet(700.0, dw.ground_y - 30, 8, 4, -ENEMY_BULLET_SPEED, 0.0, "enemy"))
+    _run(dw, 1.0)
+    assert target.hp <= 20 - 2, target.hp
+    assert not any(b.owner == "enemy" for b in dw.bullets), "storm must eat enemy bullets"
+    _check_snapshot(dw.snapshot())
+    _run(dw, 2.5)
+    assert not dw.zones
+    jw2 = _quiet("jaehwi", 34)
+    jw2.key_down("skill"); jw2.key_up("skill")
+    assert not jw2.zones and jw2.snapshot()["hud"]["skill_label"] is None
+    print("PASS 9: paper storm hits enemies inside, clears enemy bullets, cooldown holds")
+
+    # 10) shop after stage clear: buy with score, next stage, upgrades survive 'continue'
+    hw = World(stages, config, {"char": "jaehwi"}, 1920, 340, seed=35)
+    hw._start_game(1)
+    hw._stage_clear()
+    _run(hw, 2.1)
+    assert hw.state == "shop", hw.state
+    cost = hw._shop_cost("damage")
+    hw.score = cost
+    hw.state_t = 1.0
+    hw.key_down("confirm"); hw.key_up("confirm")
+    assert hw.upgrades["damage"] == 1 and hw.score == 0, (hw.upgrades, hw.score)
+    hw.key_down("confirm"); hw.key_up("confirm")
+    assert hw.upgrades["damage"] == 1 and "부족" in hw.snapshot()["hud"]["shop"]["msg"]
+    _check_snapshot(hw.snapshot())
+    hw.key_down("left"); hw.key_up("left")      # wraps to "next"
+    hw.key_down("confirm"); hw.key_up("confirm")
+    assert hw.state == "play" and hw.stage_no == 2, (hw.state, hw.stage_no)
+    sd = json.loads(json.dumps(hw.save_data()))
+    assert sd["upgrades"]["damage"] == 1 and sd["stage"] == 2
+    cw = World(stages, config, sd, 1920, 340, seed=36)
+    _run(cw, 0.3); cw.key_down("confirm"); cw.key_up("confirm")
+    assert cw.state == "continue"
+    _run(cw, 0.3); cw.key_down("confirm"); cw.key_up("confirm")
+    assert cw.state == "play" and cw.upgrades["damage"] == 1
+    cw.bullets.clear()
+    cw.key_down("fire"); cw.update(DT)
+    assert any(b.owner == "player" and b.dmg == 2 for b in cw.bullets), "damage upgrade applies to shots"
+    print(f"PASS 10: shop buys with score (damage cost {cost}), next stage, upgrades kept on continue")
+
+    # 11) hidden character: locked until the unlock stage is cleared, then selectable
+    uw = World(stages, config, {}, 1920, 340, seed=37)
+    idx = CHAR_KEYS.index("masked")
+    assert uw._char_locked("masked") and uw.snapshot()["hud"]["char_locked"][idx]
+    while uw.select_index != idx:
+        uw.key_down("right"); uw.key_up("right")
+    assert "???" in uw.snapshot()["hud"]["banner"]
+    _run(uw, 0.3)
+    uw.key_down("confirm"); uw.key_up("confirm")
+    assert uw.state == "select", "locked character must not start"
+    uw.select_index = 0
+    unlock_at = uw._unlock_stage("masked")
+    uw._start_game(unlock_at)
+    uw._stage_clear()
+    assert not uw._char_locked("masked") and "해금" in uw.snapshot()["hud"]["banner"]
+    assert "masked" in uw.save_data()["unlocked"]
+    print(f"PASS 11: hidden character locked until stage {unlock_at} clear, then unlocked and saved")
 
     dtms = (time.perf_counter() - t0) * 1000
     print(f"SELFTEST OK ({dtms:.0f} ms)")
