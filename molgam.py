@@ -119,7 +119,7 @@ class Renderer:
         if anim in ("death", "victory", "jump", "fall"):
             frame = min(int(frame), n - 1)
         img = self.bank.get(anim, int(frame), palette, flip, scale)
-        ax, ay = self.bank.anchor(anim, int(frame), flip, scale)
+        ax, ay = self.bank.anchor(anim, int(frame), flip, scale, palette=palette)
         return img, ax, ay
 
     def _pool_get(self, pool: list, factory, idx: int):

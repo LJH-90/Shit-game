@@ -55,6 +55,12 @@ class SpriteBank:
 
 구현 메모: PNG는 zlib+struct로 직접 인코딩해 `tk.PhotoImage(data=base64)`로 생성(알파 지원). 외부 라이브러리 금지.
 
+추가(v1.2, additive): 플레이어 캐릭터 전용 프레임 세트.
+- `assets_chars.py` — `tools/import_char_sheets.py`가 `sheets/<key>.png`(432×800, 셀 72×80, 한 줄 = 한 애니메이션, 발끝 = 셀 y77·x36)에서 생성. 손으로 수정 금지.
+  `CHAR_FRAMES[key][frame_id] = (w, h, anchor_x, anchor_y, rgba)` — rgba 는 w*h*4 바이트(알파 0/255). frame_id·ANIMS·ANIM_FPS 는 `assets_data` 와 공유.
+- `sprites.py` — 팔레트 이름이 `CHAR_FRAMES` 에 있으면(jaehwi/hyunki/dongil) 팔레트 스왑 대신 그 캐릭터의 원색 프레임을 쓴다. 적은 기존 `assets_data` 그대로.
+  캐릭터마다 프레임 크기·앵커가 다르므로 `size(..., palette=None)`, `anchor(..., palette=None)` 에 팔레트를 넘긴다(생략 시 공용 프레임 기준).
+
 ---
 
 ## B. `overlay.py`

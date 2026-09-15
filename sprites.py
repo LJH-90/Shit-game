@@ -4,6 +4,11 @@ Pure standard library (zlib / struct / base64 / tkinter).  Pixel data comes from
 the generated ``assets_data`` module (see tools/recolor.py); every frame is a
 byte per pixel ``(class << 4) | shade`` and this module turns it into RGBA PNGs
 for ``tk.PhotoImage(data=...)`` with real alpha transparency.
+
+Player characters (palette names in ``assets_chars.CHAR_FRAMES``) use their own
+full-colour frame sets from ``assets_chars`` (see tools/import_char_sheets.py)
+instead of the palette-swapped shared frames.  Their frame sizes and anchors
+differ per character, so pass ``palette`` to ``size()`` / ``anchor()``.
 """
 from __future__ import annotations
 
@@ -11,9 +16,11 @@ import base64
 import struct
 import zlib
 
+import assets_chars
 import assets_data
 
 CLASSES = assets_data.CLASSES
+CHAR_FRAMES = assets_chars.CHAR_FRAMES
 CLASS_INDEX = {name: idx for idx, name in CLASSES.items()}
 
 # shade multipliers, index = shade nibble (0 dark .. 3 light); shade 2 = base
@@ -106,20 +113,39 @@ def encode_png(width: int, height: int, rgba_rows: list[bytes]) -> bytes:
             + _chunk(b"IDAT", zlib.compress(raw, 6)) + _chunk(b"IEND", b""))
 
 
+def frame_data(frame_id: str, palette: str | None = None) -> tuple[tuple, bool]:
+    """(w, h, ax, ay, data) for a frame and whether data is RGBA (character set)."""
+    frames = CHAR_FRAMES.get(palette)
+    if frames is not None and frame_id in frames:
+        return frames[frame_id], True
+    return assets_data.FRAMES[frame_id], False
+
+
 def render_rgba_rows(frame_id: str, palette: str, flip: bool, scale: int,
                      lut: list[bytes] | None = None) -> tuple[int, int, list[bytes]]:
     """Return (width, height, rows) of RGBA bytes for a frame, scaled and flipped."""
-    w, h, _ax, _ay, data = assets_data.FRAMES[frame_id]
-    lut = lut or palette_lut(palette)
+    (w, h, _ax, _ay, data), is_rgba = frame_data(frame_id, palette)
+    if not is_rgba:
+        lut = lut or palette_lut(palette)
     rows = []
     for y in range(h):
-        line = data[y * w:(y + 1) * w]
-        if flip:
-            line = line[::-1]
-        if scale == 1:
-            row = b"".join(lut[p] for p in line)
+        if is_rgba:
+            line = data[y * w * 4:(y + 1) * w * 4]
+            if not flip and scale == 1:
+                row = line
+            else:
+                px = [line[i:i + 4] for i in range(0, len(line), 4)]
+                if flip:
+                    px.reverse()
+                row = b"".join(p * scale for p in px)
         else:
-            row = b"".join(lut[p] * scale for p in line)
+            line = data[y * w:(y + 1) * w]
+            if flip:
+                line = line[::-1]
+            if scale == 1:
+                row = b"".join(lut[p] for p in line)
+            else:
+                row = b"".join(lut[p] * scale for p in line)
         rows.extend([row] * scale)
     return w * scale, h * scale, rows
 
@@ -147,15 +173,16 @@ class SpriteBank:
         fps = assets_data.ANIM_FPS.get(anim, 8.0)
         return 1.0 / fps if fps > 0 else 0.1
 
-    def size(self, anim: str, frame: int, scale: int | None = None) -> tuple[int, int]:
+    def size(self, anim: str, frame: int, scale: int | None = None,
+             palette: str | None = None) -> tuple[int, int]:
         s = self.base_scale if scale is None else int(scale)
-        w, h = assets_data.FRAMES[self._frame_id(anim, frame)][:2]
+        w, h = frame_data(self._frame_id(anim, frame), palette)[0][:2]
         return w * s, h * s
 
     def anchor(self, anim: str, frame: int, flip: bool = False,
-               scale: int | None = None) -> tuple[int, int]:
+               scale: int | None = None, palette: str | None = None) -> tuple[int, int]:
         s = self.base_scale if scale is None else int(scale)
-        w, _h, ax, ay = assets_data.FRAMES[self._frame_id(anim, frame)][:4]
+        w, _h, ax, ay = frame_data(self._frame_id(anim, frame), palette)[0][:4]
         if flip:
             ax = w - 1 - ax
         return ax * s + s // 2, ay * s + s - 1
@@ -174,7 +201,8 @@ class SpriteBank:
         key = (fid, palette, bool(flip), s)
         img = self._cache.get(key)
         if img is None:
-            w, h, rows = render_rgba_rows(fid, palette, bool(flip), s, self._lut(palette))
+            lut = None if palette in CHAR_FRAMES else self._lut(palette)
+            w, h, rows = render_rgba_rows(fid, palette, bool(flip), s, lut)
             png = encode_png(w, h, rows)
             img = self._tk.PhotoImage(master=self.root, data=base64.b64encode(png).decode("ascii"))
             self._cache[key] = img
@@ -189,5 +217,5 @@ class SpriteBank:
                             self.get(anim, i, pal, flip, s)
 
 
-__all__ = ["PALETTES", "SpriteBank", "CLASSES", "shade_color", "palette_lut",
-           "encode_png", "render_rgba_rows"]
+__all__ = ["PALETTES", "SpriteBank", "CLASSES", "CHAR_FRAMES", "shade_color", "palette_lut",
+           "encode_png", "render_rgba_rows", "frame_data"]
