@@ -78,6 +78,7 @@ _KEYMAP = {
     "space": ["fire", "confirm"],
     "x": ["fire"],
     "c": ["skill"],
+    "u": ["update"],         # molgam 이 처리 (원격 업데이트 설치)
     "return": ["confirm"],
     "kp_enter": ["confirm"],
     "p": ["pause"],

@@ -68,6 +68,10 @@
       }
     }
   },
+  "update": {
+    "check": true,
+    "repo": "LJH-90/Shit-game"
+  },
   "lives": 3,
   "fps": 30,
   "save_file": "cache.dat"

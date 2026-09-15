@@ -39,6 +39,26 @@ def load_json(name: str, default=None):
     raise FileNotFoundError(name)
 
 
+def load_config_file(name: str):
+    """exe 옆 파일을 우선 쓰되, 새 버전 exe 에 동봉된 파일에만 있는 키는 채워 넣고 저장한다.
+    (업데이트 후에도 사용자가 바꾼 핫키·이름은 그대로, 새 캐릭터·설정 키는 추가)"""
+    ext = os.path.join(base_dir(), name)
+    bun = os.path.join(bundled_dir(), name)
+    if os.path.abspath(ext) == os.path.abspath(bun) or not (os.path.isfile(ext) and os.path.isfile(bun)):
+        return load_json(name)
+    with open(ext, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    with open(bun, "r", encoding="utf-8") as f:
+        bundled = json.load(f)
+    if isinstance(data, dict) and isinstance(bundled, dict) and updater.merge_missing(data, bundled):
+        try:
+            with open(ext, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
+    return data
+
+
 sys.path.insert(0, bundled_dir())
 sys.path.insert(0, base_dir())
 
@@ -46,6 +66,8 @@ from overlay import Overlay          # noqa: E402  (DPI 설정 포함, tk 임포
 import tkinter as tk                 # noqa: E402
 from sprites import SpriteBank       # noqa: E402
 from game import World, CHAR_KEYS    # noqa: E402
+import updater                       # noqa: E402
+from version import VERSION          # noqa: E402
 
 FONT = "Malgun Gothic"
 TEXT_FG = "#f2f6ff"
@@ -89,6 +111,7 @@ class Renderer:
         self.zone_pool: list[int] = []
         self.paper_pool: list[int] = []
         self.shop_ui: dict = {}
+        self._notice: tuple[int, int] | None = None
         self.W = int(canvas["width"])
         self.H = int(canvas["height"])
 
@@ -469,6 +492,19 @@ class Renderer:
                 self._hide(it)
 
 
+    # --- 오른쪽 위 알림 (버전 / 업데이트)
+    def draw_notice(self, text: str | None) -> None:
+        if self._notice is None:
+            self._notice = self._text2(0, 0, "", size=9, anchor="ne", bold=False, fill="#9fe6a0")
+        if not text:
+            for it in self._notice:
+                self._hide(it)
+            return
+        self._set_text2(self._notice, self.W - 10, 8, text)
+        for it in self._notice:
+            self._show(it)
+            self.cv.tag_raise(it)
+
     # --- 상점 (스테이지 클리어 후)
     def _shop_all_items(self) -> list:
         ui = self.shop_ui
@@ -528,11 +564,18 @@ class Renderer:
 
 class App:
     def __init__(self):
-        self.config = load_json("config.json")
-        self.stages = load_json("stages.json")
+        self.config = load_config_file("config.json")
+        self.stages = load_config_file("stages.json")
         self.save_path = os.path.join(base_dir(), self.config.get("save_file", "cache.dat"))
         self.save = self._load_save()
         self.fps = int(self.config.get("fps", 30))
+        # 원격 업데이트: exe 로 실행할 때만 파일 교체. 지난 업데이트의 .old 는 여기서 지운다
+        exe = os.path.abspath(sys.executable) if getattr(sys, "frozen", False) else None
+        updater.cleanup(exe)
+        upd_cfg = self.config.get("update") or {}
+        self.updater = updater.Updater(exe, repo=str(upd_cfg.get("repo", updater.REPO)),
+                                       enabled=bool(upd_cfg.get("check", True)))
+        self.restart_exe: str | None = None
 
         self.overlay = Overlay(hotkey=self.config.get("hotkey", "shift+0"),
                                on_toggle=self._on_toggle, on_quit=self.quit)
@@ -551,6 +594,7 @@ class App:
         except Exception:
             pass
         self.overlay.root.after(16, self.tick)
+        self.updater.check_async()
 
     # ------------------------------------------------------------ 저장
     def _load_save(self) -> dict:
@@ -584,7 +628,19 @@ class App:
     def _key_down(self, key: str) -> None:
         if key == "quit":
             return
+        if key == "update":
+            # 플레이 중에는 무시 (선택 화면 / 일시정지 / 게임오버에서만)
+            if self.world.state in ("select", "continue", "paused", "game_over"):
+                self.updater.start_install()
+            return
         self.world.key_down(key)
+
+    def _update_notice(self, state: str) -> str | None:
+        text = self.updater.notice()
+        if text and (state in ("select", "continue", "paused", "game_over")
+                     or self.updater.state in ("downloading", "ready", "error")):
+            return text
+        return f"MolGam v{VERSION}" if state == "select" else None
 
     def _key_up(self, key: str) -> None:
         self.world.key_up(key)
@@ -616,6 +672,11 @@ class App:
                 n += 1
             snap = self.world.snapshot()
             self.renderer.draw(snap)
+            self.renderer.draw_notice(self._update_notice(snap["state"]))
+            if self.updater.state == "ready" and self.restart_exe is None:
+                # 새 exe 로 교체 끝: 저장·핫키 해제 후 종료하고 main() 이 새 exe 를 띄운다
+                self.restart_exe = self.updater.exe
+                self.overlay.root.after(1500, self.quit)
             self._save_n += 1
             if self._save_n >= self.fps * 20:   # 20초마다 진행 저장
                 self._save_n = 0
@@ -643,6 +704,11 @@ def main() -> int:
             print(ex)
         return 1
     app.run()
+    if app.restart_exe:
+        try:
+            updater.restart(app.restart_exe)
+        except OSError:
+            pass
     return 0
 
 

@@ -78,6 +78,12 @@ class SpriteBank:
   강화는 게임 한 판 동안 유지, `save_data()["upgrades"]` 에 저장되어 '이어하기' 에서 복원.
 - snapshot `hud` 추가 키: `"melee_t"`, `"skill_label"`, `"skill_cd"`, `"char_locked": [bool×CHAR_KEYS]`, `"shop": {"index", "items": [{key,label,cost,level,max,afford}], "msg"} | None`.
 
+추가(v1.5, additive): 원격 업데이트 — 게임 로직(World)과 무관, 통합 계층(molgam)만 사용.
+- `version.py`: `VERSION`, `REPO`. 릴리스 태그는 `"v" + VERSION`.
+- `updater.py`: `Updater(exe_path|None, repo, current, enabled)` — `check_async()`, `start_install() -> bool`, `state`, `notice() -> str|None`. 모듈 함수 `cleanup(exe)`, `restart(exe)`, `merge_missing(dst, src) -> bool`.
+- overlay 논리 키 `'update'`(U) 추가. molgam 이 가로채며 World 에는 전달하지 않는다.
+- molgam 은 exe 옆 `config.json`/`stages.json` 을 읽을 때 동봉본에만 있는 키를 채워 넣어 저장한다.
+
 ---
 
 ## B. `overlay.py`

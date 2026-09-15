@@ -1,0 +1,54 @@
+# Push a version tag (v + version.py VERSION, e.g. v1.4.0) to build the exe and publish a release.
+# The game's updater downloads the .exe asset of the latest release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Tag must match version.py
+        shell: pwsh
+        run: |
+          $v = python -c "import version; print(version.VERSION)"
+          if ("v$v" -ne "${{ github.ref_name }}") {
+            Write-Error "tag ${{ github.ref_name }} does not match version.py VERSION v$v"
+            exit 1
+          }
+
+      - name: Selftests
+        run: |
+          python game.py --selftest
+          python updater.py --selftest
+
+      - name: Build exe
+        run: |
+          python -m pip install pyinstaller
+          python -m PyInstaller --onefile --noconsole --clean --name SystemSettingsHelper --add-data "stages.json;." --add-data "config.json;." molgam.py
+
+      - name: Package zip
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force pkg/MolGam | Out-Null
+          Copy-Item dist/SystemSettingsHelper.exe, config.json, stages.json, release/사용법.txt pkg/MolGam/
+          Compress-Archive -Path pkg/MolGam -DestinationPath MolGam.zip -Force
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/SystemSettingsHelper.exe
+            MolGam.zip
+          generate_release_notes: true
