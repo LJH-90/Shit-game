@@ -57,6 +57,7 @@ ENEMY_BULLET = "#ff6b6b"
 LASER_COLOR = "#7dffea"
 MISSILE_COLOR = "#ffa94d"
 ITEM_GLYPH = {"laser": "L", "homing": "H", "spread": "S", "rapid": "R", "life": "♥"}
+SHIELD_COLORS = ("#ff8a8a", "#ffd166", "#7dd3fc")   # 실드 1 / 2 / 3
 HUD_BG = "#161a22"
 HUD_EDGE = "#3d4a5c"
 
@@ -278,15 +279,28 @@ class Renderer:
         # 플레이어
         p = snap["player"]
         if self.player_item is None:
+            self.shield_item = self.cv.create_oval(0, 0, 0, 0, outline=SHIELD_COLORS[0], width=2)
             self.player_item = self.cv.create_image(0, 0, anchor="nw")
+        shield = snap["hud"].get("shield", 0)
         if p.get("visible", True):
             im, ax, ay = self._sprite(p["anim"], p["frame"], p["palette"], p["flip"], p.get("scale", 2))
+            px, py = int(p["x"]) - ax, int(p["y"]) - ay
             self.cv.itemconfig(self.player_item, image=im, state="normal")
-            self.cv.coords(self.player_item, int(p["x"]) - ax, int(p["y"]) - ay)
+            self.cv.coords(self.player_item, px, py)
+            if shield > 0 and p["anim"] != "death":
+                # 실드 남은 수만큼 색이 바뀌는 방어막 (3 파랑 → 1 빨강)
+                cx, w, h = int(p["x"]), im.width(), im.height()
+                r = max(w, h) // 2 + 4
+                cy = int(p["y"]) - h // 2
+                self.cv.coords(self.shield_item, cx - r, cy - r, cx + r, cy + r)
+                self.cv.itemconfig(self.shield_item, outline=SHIELD_COLORS[min(shield, 3) - 1], state="normal")
+            else:
+                self._hide(self.shield_item)
             if p.get("invincible") and int(time.perf_counter() * 12) % 2 == 0:
                 self._hide(self.player_item)
         else:
             self._hide(self.player_item)
+            self._hide(self.shield_item)
 
         # 탄환
         for i, b in enumerate(snap["bullets"]):
@@ -352,6 +366,8 @@ class Renderer:
             self.hud_items["boss"] = self.cv.create_rectangle(0, 0, 0, 0, fill="#ff5252", outline="")
             self.hud_items["bosstxt"] = self._text2(0, 0, "", size=9, anchor="w")
         hearts = "♥" * max(0, hud["lives"]) + "♡" * max(0, self.config.get("lives", 3) - hud["lives"])
+        if hud.get("shield_max"):
+            hearts += " 실드" + "◆" * max(0, hud["shield"]) + "◇" * max(0, hud["shield_max"] - hud["shield"])
         diff = hud.get("difficulty", "easy")
         diff_txt = ""
         if hud.get("stage_no", 1) >= 15:

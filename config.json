@@ -17,7 +17,8 @@
       "speed": 0.9,
       "fire_rate": 1.0,
       "jump": 1.0,
-      "pierce": false
+      "pierce": false,
+      "shield": 3
     },
     "dongil": {
       "name": "석동일",

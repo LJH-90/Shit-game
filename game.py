@@ -27,6 +27,7 @@ ENEMY_BULLET_SPEED = 320.0
 FIRE_RATE = 6.0                 # player shots / s (base)
 PLAYER_W, PLAYER_H = 12, 28   # 그리기 배율 1x 스프라이트(약 14x30px) 기준 히트박스
 ENEMY_W, ENEMY_H = 12, 28
+SHIELD_INV = 0.6                # s of invincibility after a shield charge absorbs a hit
 MAX_ENEMIES, MAX_BULLETS, MAX_EFFECTS = 14, 40, 30
 DASH_SPEED = 520.0
 STAMP_SPEED = 450.0
@@ -116,10 +117,11 @@ class _Ent:
 
 class Player(_Ent):
     __slots__ = ("crouch", "fire_cd", "shoot_t", "inv_t", "dead", "death_t", "drop_t", "jump_buf", "on_platform",
-                 "weapon", "weapon_t", "ammo")
+                 "weapon", "weapon_t", "ammo", "shield")
 
     def __init__(self):
         super().__init__()
+        self.shield = 0
         self.weapon = "normal"
         self.weapon_t = 0.0
         self.ammo = 0
@@ -433,6 +435,7 @@ class World:
                     "char_names": list(self.char_names),
                     "continue_stage": self.continue_stage,
                     "show_enemy_hp": bool(self.char.get("show_enemy_hp", False)),
+                    "shield": p.shield, "shield_max": self._shield_max(),
                     "weapon": (p.weapon if p.weapon != "normal" else None),
                     "weapon_label": ITEM_LABEL.get(p.weapon),
                     "weapon_left": (p.ammo if p.weapon == "homing"
@@ -618,6 +621,7 @@ class World:
         p.dead = False
         p.death_t = 0.0
         p.inv_t = invincible
+        p.shield = self._shield_max()      # refilled every stage start and respawn
         p.fire_cd = 0.0
         p.shoot_t = 0.0
         p.jump_buf = 0.0
@@ -1139,12 +1143,12 @@ class World:
                 if not p.dead and p.inv_t <= 0 and _overlap(bb, pbox):
                     b.dead = True
                     self._effect("spark", b.x, b.y)
-                    self._kill_player()
+                    self._hit_player()
         # boss dash contact
         if not p.dead and p.inv_t <= 0:
             for e in self.enemies:
                 if e.alive and e.boss and e.dash_t > 0 and _overlap(e.box(), pbox):
-                    self._kill_player()
+                    self._hit_player()
                     break
 
     def _damage_enemy(self, e: Enemy, dmg: int):
@@ -1175,6 +1179,21 @@ class World:
                 if o is not e and o.alive:
                     o.death_t = 0.0
                     o.set_anim("death")
+
+    def _shield_max(self) -> int:
+        return max(0, int(self.char.get("shield", 0) or 0))
+
+    def _hit_player(self):
+        """Enemy bullet / boss contact. A shield charge absorbs the hit before a life is lost."""
+        p = self.player
+        if p.dead or p.inv_t > 0:
+            return
+        if p.shield > 0:
+            p.shield -= 1
+            p.inv_t = SHIELD_INV
+            self._effect("text", p.x, p.y - PLAYER_H - 12, text=f"실드 {p.shield}")
+            return
+        self._kill_player()
 
     def _kill_player(self, force: bool = False):
         p = self.player
@@ -1288,7 +1307,7 @@ ITEM_KEYS = {"x", "y", "kind", "t"}
 EFFECT_KEYS = {"kind", "x", "y", "t", "text"}
 HUD_KEYS = {"lives", "score", "best", "stage_no", "stage_name", "difficulty", "boss_hp", "boss_hp_max",
             "banner", "banner_t", "char_name", "select_index", "char_names", "continue_stage", "show_enemy_hp",
-            "weapon", "weapon_label", "weapon_left"}
+            "weapon", "weapon_label", "weapon_left", "shield", "shield_max"}
 ALL_KEYS = {"left", "right", "up", "down", "jump", "fire", "pause", "quit", "confirm", "sel_left", "sel_right"}
 
 
@@ -1525,6 +1544,35 @@ def selftest() -> int:
     aw._kill_player(force=True)
     assert aw.player.weapon == "normal"
     print(f"PASS 6: hits land, grunt hp by stage {hp_seen}, laser/homing/1UP items work")
+
+    # 7) shield: hyunki absorbs 3 enemy bullets, the 4th costs a life; refilled on respawn
+    sw = World(stages, config, {"char": "hyunki"}, 1920, 340, seed=21)
+    assert sw.char_key == "hyunki" and sw._shield_max() == 3
+    sw._start_game(1)
+    sw.enemies.clear(); sw.pending.clear(); sw.bullets.clear()
+    lives0 = sw.lives
+    assert sw.player.shield == 3 and sw.snapshot()["hud"]["shield"] == 3
+
+    def _shoot_player(world):
+        p = world.player
+        p.inv_t = 0.0
+        world.bullets.append(Bullet(p.x, p.y - PLAYER_H / 2, 6, 6, 0.0, 0.0, "enemy"))
+        world.update(1 / 30)
+
+    for left in (2, 1, 0):
+        _shoot_player(sw)
+        assert sw.player.shield == left and not sw.player.dead and sw.lives == lives0, (sw.player.shield, sw.lives)
+    _shoot_player(sw)
+    assert sw.player.dead
+    _run(sw, 1.2)
+    assert sw.lives == lives0 - 1 and sw.player.shield == 3, (sw.lives, sw.player.shield)
+    jw = World(stages, config, {"char": "jaehwi"}, 1920, 340, seed=22)
+    jw._start_game(1)
+    jw.enemies.clear(); jw.pending.clear(); jw.bullets.clear()
+    assert jw.player.shield == 0 and jw.snapshot()["hud"]["shield_max"] == 0
+    _shoot_player(jw)
+    assert jw.player.dead, "characters without a shield die on the first hit"
+    print("PASS 7: hyunki shield absorbs 3 hits, 4th costs a life, refilled on respawn")
 
     dtms = (time.perf_counter() - t0) * 1000
     print(f"SELFTEST OK ({dtms:.0f} ms)")

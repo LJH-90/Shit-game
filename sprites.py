@@ -18,9 +18,43 @@ import zlib
 
 import assets_chars
 import assets_data
+import assets_extra
 
 CLASSES = assets_data.CLASSES
 CHAR_FRAMES = assets_chars.CHAR_FRAMES
+
+_C_OUTLINE = 1
+_C_SHOE = 7
+_OUTLINE_PX = (_C_OUTLINE << 4) | 1
+
+
+def _outlined(frame):
+    """Pad a class frame by 1 px and outline its silhouette where the edge is not already dark,
+    so light sprites (white shirts, lab coats) stay readable over a light desktop."""
+    w, h, ax, ay, data = frame
+    nw, nh = w + 2, h + 2
+    src = bytearray(nw * nh)
+    for y in range(h):
+        src[(y + 1) * nw + 1:(y + 1) * nw + 1 + w] = data[y * w:(y + 1) * w]
+    out = bytearray(src)
+    for y in range(nh):
+        for x in range(nw):
+            if src[y * nw + x]:
+                continue
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < nw and 0 <= ny < nh:
+                    p = src[ny * nw + nx]
+                    if p and (p >> 4) not in (_C_OUTLINE, _C_SHOE):
+                        out[y * nw + x] = _OUTLINE_PX
+                        break
+    return nw, nh, ax + 1, ay + 1, bytes(out)
+
+
+# shared (palette-swapped) frames: base set + upright run frames that replace the crouched run
+FRAMES = {fid: _outlined(fr) for fid, fr in {**assets_data.FRAMES, **assets_extra.FRAMES}.items()}
+ANIMS = {**assets_data.ANIMS, **assets_extra.ANIMS}
+ANIM_FPS = {**assets_data.ANIM_FPS, **assets_extra.ANIM_FPS}
 CLASS_INDEX = {name: idx for idx, name in CLASSES.items()}
 
 # shade multipliers, index = shade nibble (0 dark .. 3 light); shade 2 = base
@@ -118,7 +152,7 @@ def frame_data(frame_id: str, palette: str | None = None) -> tuple[tuple, bool]:
     frames = CHAR_FRAMES.get(palette)
     if frames is not None and frame_id in frames:
         return frames[frame_id], True
-    return assets_data.FRAMES[frame_id], False
+    return FRAMES[frame_id], False
 
 
 def render_rgba_rows(frame_id: str, palette: str, flip: bool, scale: int,
@@ -163,14 +197,14 @@ class SpriteBank:
 
     # -- lookups ---------------------------------------------------------
     def _frame_id(self, anim: str, frame: int) -> str:
-        ids = assets_data.ANIMS[anim]
+        ids = ANIMS[anim]
         return ids[frame % len(ids)]
 
     def anim_len(self, anim: str) -> int:
-        return len(assets_data.ANIMS[anim])
+        return len(ANIMS[anim])
 
     def frame_time(self, anim: str) -> float:
-        fps = assets_data.ANIM_FPS.get(anim, 8.0)
+        fps = ANIM_FPS.get(anim, 8.0)
         return 1.0 / fps if fps > 0 else 0.1
 
     def size(self, anim: str, frame: int, scale: int | None = None,
@@ -210,12 +244,13 @@ class SpriteBank:
 
     def preload(self, palettes: list[str], scales=(2,)) -> None:
         for pal in palettes:
-            for anim, ids in assets_data.ANIMS.items():
+            for anim, ids in ANIMS.items():
                 for i in range(len(ids)):
                     for s in scales:
                         for flip in (False, True):
                             self.get(anim, i, pal, flip, s)
 
 
-__all__ = ["PALETTES", "SpriteBank", "CLASSES", "CHAR_FRAMES", "shade_color", "palette_lut",
+__all__ = ["PALETTES", "SpriteBank", "CLASSES", "CHAR_FRAMES", "FRAMES", "ANIMS", "ANIM_FPS",
+           "shade_color", "palette_lut",
            "encode_png", "render_rgba_rows", "frame_data"]

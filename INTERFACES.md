@@ -61,6 +61,13 @@ class SpriteBank:
 - `sprites.py` — 팔레트 이름이 `CHAR_FRAMES` 에 있으면(jaehwi/hyunki/dongil) 팔레트 스왑 대신 그 캐릭터의 원색 프레임을 쓴다. 적은 기존 `assets_data` 그대로.
   캐릭터마다 프레임 크기·앵커가 다르므로 `size(..., palette=None)`, `anchor(..., palette=None)` 에 팔레트를 넘긴다(생략 시 공용 프레임 기준).
 
+추가(v1.3, additive):
+- `assets_extra.py` — `tools/build_run_frames.py` 가 원본 시트의 서서 달리는 프레임으로 생성. assets_data 와 같은 형식의 `FRAMES`, 그리고 `ANIMS`/`ANIM_FPS` 의 `run`(4장)·`shoot_run`(3장) 교체분. 손으로 수정 금지.
+  같은 스크립트가 캐릭터별로 칠한 `sheets/<key>_run.png`(셀 100×80, 발끝 y77·x50, 0행 run / 1행 shoot_run)도 만든다. `import_char_sheets.py` 가 이를 읽는다.
+- `sprites.py` — `FRAMES`/`ANIMS`/`ANIM_FPS` = assets_data + assets_extra 병합본. 공용(팔레트) 프레임은 로드 시 1px 윤곽선을 둘러 1px 패딩(앵커 +1).
+- 문현기 실드: `config.json` 캐릭터 항목 `"shield": N`(기본 0). 적 탄환·보스 돌진 피격 시 실드가 먼저 1 깎이고 `SHIELD_INV` 초 무적, 0이면 목숨 차감. 스테이지 시작·부활 때 가득 채움. 구덩이 낙사는 실드 무시.
+  snapshot `hud` 에 `"shield": int`, `"shield_max": int` 추가.
+
 ---
 
 ## B. `overlay.py`
