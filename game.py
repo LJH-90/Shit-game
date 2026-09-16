@@ -33,18 +33,23 @@ MELEE_KNOCK_BOSS = 0.3          # bosses are shoved this fraction of the knockba
 ZONE_H = 120                    # height of a skill zone above the ground
 MAX_ZONES = 3
 DEFAULT_UNLOCK_STAGE = 5
-DEFAULT_SHOP = {                # key: [label, base cost, cost growth per level, max level]
-    "damage": ["공격력 +1", 3000, 1.7, 5],
+DEFAULT_SHOP = {                # key: [label, base cost, cost growth per level, max level (0 = unlimited)]
+    "str": ["힘 +1", 1500, 1.25, 0],
+    "agi": ["민첩 +1", 1500, 1.25, 0],
+    "int": ["지혜 +1", 1500, 1.25, 0],
     "rate": ["연사 +20%", 2500, 1.6, 5],
     "shield": ["실드 +1", 4000, 1.8, 3],
     "life": ["목숨 +1", 5000, 2.0, 3],
 }
-SHOP_ORDER = ("damage", "rate", "shield", "life", "next")
+SHOP_ORDER = ("str", "agi", "int", "rate", "shield", "life", "next")
+STAT_KEYS = ("agi", "str", "int")
 MAX_ENEMIES, MAX_BULLETS, MAX_EFFECTS = 14, 40, 30
 DASH_SPEED = 520.0
 STAMP_SPEED = 450.0
-MISSILE_SPEED = 430.0
+MISSILE_SPEED = 860.0
 MISSILE_TURN = 7.0              # rad/s
+SPREAD_ANGLE = 0.087            # rad (±5°) between the three spread shots
+PROJ_ANIM_FPS = 8               # sprite projectiles ("proj" anim) advance at a fixed rate
 ITEM_TTL = 9.0                  # s an item stays on the floor
 ITEM_KINDS = ("laser", "homing", "spread", "rapid", "life")
 ITEM_LABEL = {"laser": "레이저", "homing": "유도탄", "spread": "3연발", "rapid": "속사", "life": "1UP"}
@@ -65,6 +70,17 @@ DEFAULT_ELEMENT_MULT = {"strong": 1.5, "weak": 0.5}
 STAT_BASE = 5                   # stats are 1..10, 5 = neutral
 SPEED_PER_AGI = 0.06            # move-speed multiplier = 1 + SPEED_PER_AGI * (agi - STAT_BASE)
 JUMP_PER_AGI = 0.04             # jump multiplier      = 1 + JUMP_PER_AGI * (agi - STAT_BASE)
+BULLET_PER_INT = 0.08           # bullet speed = BULLET_SPEED * (1 + BULLET_PER_INT * (int - STAT_BASE)); not laser
+
+# --- v1.7: equipment (granted by a department stage's final boss; levels unlimited)
+EQUIP_ORDER = ("hat", "gloves", "suit", "shoes")     # tie order when picking the lowest-level slot
+DEFAULT_EQUIPMENT = {
+    "hat": {"label": "안전모", "shield": 1},
+    "gloves": {"label": "작업 장갑", "rate": 0.2},
+    "suit": {"label": "사신 정장", "magic": 1},
+    "shoes": {"label": "운동화", "speed": 0.12, "jump": 0.08},
+}
+EQUIP_BANNER_T = 2.0
 MID_BANNER_T = 1.5
 BRAWLER_ATTACK_T = 0.5          # s an attack / attack2 animation lasts
 BRAWLER_HIT_WINDOW = (0.15, 0.35)   # contact damage window inside the melee attack
@@ -179,7 +195,7 @@ class Enemy(_Ent):
     def __init__(self):
         super().__init__()
         self.element = None         # ELEMENT_KEYS entry or None
-        self.mid = False            # mid boss (brawler) flag
+        self.mid = False            # mid boss flag (palette boss with the "mid" AI, spawned mid-stage)
         self.attack_t = 0.0         # remaining time of the current attack / attack2 animation
         self.attack_cd = 0.0
         self.ranged_cd = 1.5
@@ -227,11 +243,15 @@ class Enemy(_Ent):
 
 class Bullet:
     __slots__ = ("x", "y", "w", "h", "vx", "vy", "owner", "dmg", "pierce", "hit", "dead", "stamp",
-                 "kind", "ttl", "px", "py", "mdmg", "element")
+                 "kind", "ttl", "px", "py", "mdmg", "element", "sprite", "anim", "frame", "anim_t")
 
     def __init__(self, x, y, w, h, vx, vy, owner, dmg=1, pierce=False, stamp=False, kind="normal", ttl=None,
-                 mdmg=0, element=None):
+                 mdmg=0, element=None, sprite=None, anim=None):
         self.x, self.y, self.w, self.h = x, y, w, h
+        self.sprite = sprite             # palette key of a sprite projectile (drawn instead of a rectangle)
+        self.anim = anim                 # its anim name ("proj"); advanced by _update_bullets at PROJ_ANIM_FPS
+        self.frame = 0
+        self.anim_t = 0.0
         self.px, self.py = x, y          # previous position (swept collision)
         self.vx, self.vy = vx, vy
         self.owner = owner
@@ -242,7 +262,7 @@ class Bullet:
         self.hit = set()
         self.dead = False
         self.stamp = stamp
-        self.kind = kind                 # "normal" | "laser" | "missile"
+        self.kind = kind                 # "normal" | "laser" | "missile" | "proj"
         self.ttl = ttl                   # seconds; None = until off-screen
 
     def swept_box(self):
@@ -321,6 +341,14 @@ class World:
         self.element_mult = {"strong": float(em.get("strong", 1.5)), "weak": float(em.get("weak", 0.5))}
         self.mid_bosses = [m for m in (self.stages.get("mid_bosses") or [])
                            if isinstance(m, dict) and m.get("rank") in self.ranks]
+        self.final_bosses = [k for k in (self.stages.get("final_bosses") or []) if k in self.ranks]
+        # equipment: defaults merged with config "equipment"
+        self.equipment: dict[str, dict] = {}
+        cfg_eq = self.config.get("equipment") or {}
+        for k in EQUIP_ORDER:
+            eq = dict(DEFAULT_EQUIPMENT[k])
+            eq.update(cfg_eq.get(k) or {})
+            self.equipment[k] = eq
         self.anim_lens: dict[str, int] | None = None   # optional: integration may set {"death": n, ...} to hold last frame
 
         # --- save / persistent
@@ -339,6 +367,7 @@ class World:
             self.element_index = ELEMENT_KEYS.index(save["element"])
         self.unlocked: set[str] = {k for k in (save.get("unlocked") or []) if k in CHAR_KEYS}
         self.saved_upgrades = dict(save.get("upgrades") or {})
+        self.saved_equip = {k: int(v) for k, v in (save.get("equip") or {}).items() if k in EQUIP_ORDER}
         self.shop_items = {k: list(v) for k, v in DEFAULT_SHOP.items()}
         for k, v in (self.config.get("shop") or {}).items():
             if k in self.shop_items and isinstance(v, dict):
@@ -350,6 +379,8 @@ class World:
 
         # --- runtime
         self.upgrades = {k: 0 for k in self.shop_items}
+        self.equip = {k: 0 for k in EQUIP_ORDER}
+        self._equip_msg: str | None = None      # last "장비 획득" text, appended to the STAGE CLEAR banner
         self.zones: list[dict] = []
         self.shop_index = 0
         self.shop_msg = ""
@@ -405,23 +436,50 @@ class World:
             return {k: int(s[k]) for k in ("agi", "str", "int")}
         return None
 
-    def _speed_mult(self, c: dict) -> float:
+    def _eff_stats(self, c: dict) -> dict | None:
+        """Effective stats = config stats + shop upgrades (str/agi/int). None for legacy characters."""
         s = self._stats(c)
-        return 1.0 + SPEED_PER_AGI * (s["agi"] - STAT_BASE) if s else float(c.get("speed", 1.0))
+        if s is None:
+            return None
+        return {k: s[k] + int(self.upgrades.get(k, 0)) for k in STAT_KEYS}
+
+    def _equip_bonus(self, key: str) -> float:
+        """Sum over slots of <effect per level> x level for effect `key` (shield/rate/magic/speed/jump)."""
+        total = 0.0
+        for slot, lv in self.equip.items():
+            eq = self.equipment.get(slot)
+            if eq and lv > 0 and key in eq:
+                total += float(eq[key]) * lv
+        return total
+
+    def _speed_mult(self, c: dict) -> float:
+        s = self._eff_stats(c)
+        base = 1.0 + SPEED_PER_AGI * (s["agi"] - STAT_BASE) if s else float(c.get("speed", 1.0))
+        return base * (1.0 + self._equip_bonus("speed"))
 
     def _jump_mult(self, c: dict) -> float:
-        s = self._stats(c)
-        return 1.0 + JUMP_PER_AGI * (s["agi"] - STAT_BASE) if s else float(c.get("jump", 1.0))
+        s = self._eff_stats(c)
+        base = 1.0 + JUMP_PER_AGI * (s["agi"] - STAT_BASE) if s else float(c.get("jump", 1.0))
+        return base * (1.0 + self._equip_bonus("jump"))
 
     def _phys_dmg(self, c: dict) -> int:
-        """Physical damage per shot, shop upgrade included."""
-        s = self._stats(c)
-        base = max(1, s["str"] // 3) if s else max(1, int(round(float(c.get("damage", 1.0)))))
-        return base + self.upgrades.get("damage", 0)
+        """Physical damage per shot: max(1, str // 3) (legacy characters: config damage)."""
+        s = self._eff_stats(c)
+        return max(1, s["str"] // 3) if s else max(1, int(round(float(c.get("damage", 1.0)))))
 
     def _magic_dmg(self, c: dict) -> int:
-        s = self._stats(c)
-        return max(0, s["int"] // 3) if s else 0
+        """Magic damage: int // 3 + suit levels."""
+        s = self._eff_stats(c)
+        return max(0, (s["int"] // 3 if s else 0) + int(round(self._equip_bonus("magic"))))
+
+    def _bullet_speed(self, c: dict) -> float:
+        """int -> bullet speed (normal / spread / rapid / missile; laser is instant)."""
+        s = self._eff_stats(c)
+        return BULLET_SPEED * (1.0 + BULLET_PER_INT * (s["int"] - STAT_BASE)) if s else BULLET_SPEED
+
+    def _fire_rate_mult(self, c: dict) -> float:
+        return (float(c.get("fire_rate", 1.0)) * (1.0 + 0.2 * self.upgrades.get("rate", 0))
+                * (1.0 + self._equip_bonus("rate")))
 
     def _elem_mult(self, attacker: str | None, target: str | None) -> float:
         if attacker not in self.elements or target not in self.elements:
@@ -568,7 +626,8 @@ class World:
                          "palette": e.palette, "scale": e.scale, "label": e.label, "hp": max(0, e.hp),
                          "hp_max": e.hp_max, "boss": e.boss, "element": e.element, "mid": e.mid}
                         for e in self.enemies],
-            "bullets": [{"x": b.x, "y": b.y, "w": b.w, "h": b.h, "owner": b.owner, "kind": b.kind}
+            "bullets": [{"x": b.x, "y": b.y, "w": b.w, "h": b.h, "owner": b.owner, "kind": b.kind,
+                         "sprite": b.sprite, "anim": b.anim, "frame": b.frame, "flip": b.vx < 0}
                         for b in self.bullets],
             "items": [{"x": it.x, "y": it.y, "kind": it.kind, "t": it.t} for it in self.items],
             "zones": [{"kind": z["kind"], "x": z["x"], "w": z["w"], "h": ZONE_H, "t": z["t"], "ttl": z["ttl"]}
@@ -600,15 +659,17 @@ class World:
                     "element_names": [self.elements[k]["name"] for k in ELEMENT_KEYS],
                     "element_index": self.element_index % len(ELEMENT_KEYS),
                     "element_colors": {k: self.elements[k]["color"] for k in ELEMENT_KEYS},
-                    "stats": self._stats(self.char),
-                    "char_stats": [self._stats(self.chars[k]) for k in CHAR_KEYS]},
+                    "stats": self._eff_stats(self.char),
+                    "char_stats": [self._stats(self.chars[k]) for k in CHAR_KEYS],
+                    "equip": dict(self.equip),
+                    "equip_labels": {k: str(self.equipment[k].get("label", k)) for k in EQUIP_ORDER}},
         }
 
     def save_data(self) -> dict:
         return {"stage": int(self.save_stage), "best": int(self.best), "char": self.char_key,
                 "char_name": self.char["name"], "hotkey": self.config.get("hotkey", "shift+0"),
                 "upgrades": dict(self.saved_upgrades), "unlocked": sorted(self.unlocked),
-                "element": self.element_key}
+                "element": self.element_key, "equip": dict(self.saved_equip)}
 
     # ------------------------------------------------------------ debug helpers (selftest)
     def _debug_kill_all(self) -> int:
@@ -701,7 +762,12 @@ class World:
             bosses = list(d.get("bosses") or ["director"])
             titles = list(d.get("boss_titles") or [])
         else:
-            bosses = [d.get("boss", "teamlead")]
+            # department stages: the final boss rotates through "final_bosses" (KOF brawlers) by stage number,
+            # keeping the department's own boss title; falls back to the department "boss" rank.
+            if self.final_bosses:
+                bosses = [self.final_bosses[(n - 1) % len(self.final_bosses)]]
+            else:
+                bosses = [d.get("boss", "teamlead")]
             titles = [d.get("boss_title") or self._rank(bosses[0]).get("title", "보스")]
         while len(titles) < len(bosses):
             titles.append(self._rank(bosses[len(titles)]).get("title", "보스"))
@@ -760,10 +826,15 @@ class World:
         self.lives = self.lives_max
         self.score = 0
         self.upgrades = {k: 0 for k in self.shop_items}
-        if keep_upgrades:                       # "continue": upgrades bought before reaching that stage
+        self.equip = {k: 0 for k in EQUIP_ORDER}
+        if keep_upgrades:                       # "continue": upgrades / equipment earned before reaching that stage
             for k, v in self.saved_upgrades.items():
                 if k in self.upgrades:
-                    self.upgrades[k] = max(0, min(int(v), self.shop_items[k][3]))
+                    mx = self.shop_items[k][3]
+                    self.upgrades[k] = max(0, int(v)) if mx <= 0 else max(0, min(int(v), mx))
+            for k, v in self.saved_equip.items():
+                if k in self.equip:
+                    self.equip[k] = max(0, int(v))
         self._start_stage(stage_no)
 
     def _start_stage(self, n: int):
@@ -778,6 +849,8 @@ class World:
         self.effects.clear()
         self.zones.clear()
         self.saved_upgrades = dict(self.upgrades)
+        self.saved_equip = dict(self.equip)
+        self._equip_msg = None
         self.boss_ref = None
         self.wave_index = 0
         self.boss_index = 0
@@ -1045,30 +1118,33 @@ class World:
         mdmg = self._magic_dmg(c)
         el = self.element_key
         pierce = bool(c.get("pierce", False))
-        rate = FIRE_RATE * float(c.get("fire_rate", 1.0)) * (1.0 + 0.2 * self.upgrades.get("rate", 0))
+        rate = FIRE_RATE * self._fire_rate_mult(c)
+        spd = self._bullet_speed(c)
         w = p.weapon
         if w == "laser":
             edge = self.width + 40 if p.facing > 0 else -40
             cx = (gx + edge) / 2
             self.bullets.append(Bullet(cx, gun_y, abs(edge - gx), 3, 0.0, 0.0, "player",
-                                       dmg=dmg + 1, pierce=True, kind="laser", ttl=0.08, mdmg=mdmg, element=el))
+                                       dmg=max(1, (dmg + 1) // 2), pierce=True, kind="laser", ttl=0.08,
+                                       mdmg=mdmg, element=el))
             rate *= 0.5
         elif w == "homing":
-            self.bullets.append(Bullet(gx, gun_y, 10, 5, p.facing * MISSILE_SPEED, 0.0, "player",
-                                       dmg=dmg + 2, pierce=False, kind="missile", ttl=3.0, mdmg=mdmg, element=el))
+            mspd = MISSILE_SPEED * spd / BULLET_SPEED
+            self.bullets.append(Bullet(gx, gun_y, 10, 5, p.facing * mspd, 0.0, "player",
+                                       dmg=dmg + 2, pierce=False, kind="missile", ttl=None, mdmg=mdmg, element=el))
             p.ammo -= 1
             rate *= 0.7
             if p.ammo <= 0:
                 p.weapon, p.ammo = "normal", 0
         elif w == "spread":
-            for ang in (-0.26, 0.0, 0.26):
+            for ang in (-SPREAD_ANGLE, 0.0, SPREAD_ANGLE):
                 if len(self.bullets) >= MAX_BULLETS:
                     break
-                self.bullets.append(Bullet(gx, gun_y, 8, 4, p.facing * BULLET_SPEED * math.cos(ang),
-                                           BULLET_SPEED * math.sin(ang), "player", dmg=dmg, pierce=pierce,
+                self.bullets.append(Bullet(gx, gun_y, 8, 4, p.facing * spd * math.cos(ang),
+                                           spd * math.sin(ang), "player", dmg=dmg, pierce=pierce,
                                            mdmg=mdmg, element=el))
         else:
-            self.bullets.append(Bullet(gx, gun_y, 8, 4, p.facing * BULLET_SPEED, 0.0, "player",
+            self.bullets.append(Bullet(gx, gun_y, 8, 4, p.facing * spd, 0.0, "player",
                                        dmg=dmg, pierce=pierce, mdmg=mdmg, element=el))
             if w == "rapid":
                 rate *= 2.0
@@ -1095,7 +1171,7 @@ class World:
         return hits
 
     def _player_melee(self, p: Player, melee: dict, targets: list):
-        dmg = max(1, int(melee.get("damage", 4))) + self.upgrades.get("damage", 0)
+        dmg = max(1, int(melee.get("damage", 4))) + self.upgrades.get("str", 0) // 3   # bought 힘 also helps melee
         mdmg = self._magic_dmg(self.char)
         knock = float(melee.get("knockback", 260)) * 0.12
         for e in targets:
@@ -1117,7 +1193,7 @@ class World:
         dur = float(storm.get("duration", 3.0))
         self.zones.append({"kind": "storm", "x": p.x + p.facing * (w / 2 + 10), "w": w, "t": dur, "ttl": dur,
                            "tick": 0.0, "every": float(storm.get("tick", 0.4)),
-                           "dmg": max(1, int(storm.get("damage", 1))) + self.upgrades.get("damage", 0),
+                           "dmg": max(1, int(storm.get("damage", 1))) + self.upgrades.get("str", 0) // 3,
                            "mdmg": self._magic_dmg(self.char), "element": self.element_key})
         p.skill_cd = float(storm.get("cooldown", 8.0))
         p.shoot_t = 0.3
@@ -1162,7 +1238,7 @@ class World:
             self._start_stage(self.stage_no + 1)
             return
         label, _base, _growth, mx = self.shop_items[key]
-        if self.upgrades[key] >= mx:
+        if mx > 0 and self.upgrades[key] >= mx:          # max 0 = unlimited
             self.shop_msg = f"{label}: 최대 단계"
             return
         cost = self._shop_cost(key)
@@ -1184,9 +1260,10 @@ class World:
             label, _base, _growth, mx = self.shop_items[key]
             lv = self.upgrades.get(key, 0)
             cost = self._shop_cost(key)
-            rows.append({"key": key, "label": label, "cost": cost, "level": lv, "max": mx,
-                         "afford": lv < mx and self.score >= cost})
-        return {"index": self.shop_index % len(SHOP_ORDER), "items": rows, "msg": self.shop_msg}
+            rows.append({"key": key, "label": label, "cost": cost, "level": lv, "max": max(0, mx),
+                         "afford": (mx <= 0 or lv < mx) and self.score >= cost})
+        return {"index": self.shop_index % len(SHOP_ORDER), "items": rows, "msg": self.shop_msg,
+                "stats": self._eff_stats(self.char)}
 
     def _drop_item(self, e: Enemy):
         if len(self.items) >= MAX_ITEMS:
@@ -1428,7 +1505,7 @@ class World:
         return e.w * 0.6 + 30.0
 
     def _brawler_ai(self, e: Enemy, dt: float, dx: float, dist: float):
-        """Mid boss (mai/choi): walk in, chase, melee in reach, single aimed shot at range, occasional jump."""
+        """KOF final bosses (mai/choi/chang): walk in, chase, melee in reach, aimed shot at range, occasional jump."""
         p = self.player
         if e.intro:
             e.vx = -e.speed
@@ -1497,12 +1574,20 @@ class World:
         self._maybe_hop(e)
 
     def _brawler_shot(self, e: Enemy):
-        """attack2: one aimed projectile at 1.2x enemy bullet speed."""
+        """attack2: one aimed projectile. Ranks with "proj" fire a sprite bullet (kind "proj", palette anim
+        "proj", size / speed factor from the rank); otherwise a plain shot at 1.2x enemy bullet speed."""
         if len(self.bullets) >= MAX_BULLETS:
             return
         p = self.player
         gx, gy = e.x + e.facing * (e.w / 2), e.y - e.h * 0.6
         ang = math.atan2((p.y - PLAYER_H / 2) - gy, p.x - gx)
+        proj = self._rank(e.rank).get("proj")
+        if isinstance(proj, dict):
+            spd = ENEMY_BULLET_SPEED * float(proj.get("speed", 1.2))
+            self.bullets.append(Bullet(gx, gy, float(proj.get("w", 8)), float(proj.get("h", 4)),
+                                       math.cos(ang) * spd, math.sin(ang) * spd, "enemy", kind="proj",
+                                       sprite=e.palette, anim="proj"))
+            return
         spd = ENEMY_BULLET_SPEED * 1.2
         self.bullets.append(Bullet(gx, gy, 8, 4, math.cos(ang) * spd, math.sin(ang) * spd, "enemy"))
 
@@ -1533,6 +1618,12 @@ class World:
                 self._steer_missile(b, dt)
             b.x += b.vx * dt
             b.y += b.vy * dt
+            if b.anim:
+                b.anim_t += dt
+                step = 1.0 / PROJ_ANIM_FPS
+                while b.anim_t >= step:
+                    b.anim_t -= step
+                    b.frame += 1
             if b.ttl is not None:
                 b.ttl -= dt
                 if b.ttl <= 0:
@@ -1561,7 +1652,8 @@ class World:
             diff = -math.copysign(abs(diff), b.vx if abs(b.vx) > 1 else 1.0)
         step = MISSILE_TURN * dt
         cur += max(-step, min(step, diff))
-        b.vx, b.vy = math.cos(cur) * MISSILE_SPEED, math.sin(cur) * MISSILE_SPEED
+        spd = math.hypot(b.vx, b.vy) or MISSILE_SPEED        # keeps the int-scaled launch speed
+        b.vx, b.vy = math.cos(cur) * spd, math.sin(cur) * spd
 
     def _collide(self):
         p = self.player
@@ -1629,9 +1721,26 @@ class World:
                 if o is not e and o.alive:
                     o.death_t = 0.0
                     o.set_anim("death")
+            if not e.mid and self.stage.get("kind") == "dept":
+                self._grant_equip()
+
+    def _grant_equip(self) -> str:
+        """A department stage's final boss fell: +1 level on the lowest-level slot (ties: EQUIP_ORDER)."""
+        slot = min(EQUIP_ORDER, key=lambda k: (self.equip.get(k, 0), EQUIP_ORDER.index(k)))
+        self.equip[slot] = self.equip.get(slot, 0) + 1
+        label = str(self.equipment[slot].get("label", slot))
+        msg = f"장비 획득 · {label} Lv{self.equip[slot]}"
+        self._equip_msg = msg
+        self._set_banner(msg, EQUIP_BANNER_T)
+        p = self.player
+        self._effect("text", p.x, p.y - PLAYER_H - 24, text=f"{label} Lv{self.equip[slot]}")
+        if p.shield < self._shield_max() and slot == "hat":
+            p.shield += 1                       # a new helmet level comes charged
+        return slot
 
     def _shield_max(self) -> int:
-        return max(0, int(self.char.get("shield", 0) or 0) + self.upgrades.get("shield", 0))
+        return max(0, int(self.char.get("shield", 0) or 0) + self.upgrades.get("shield", 0)
+                   + int(round(self._equip_bonus("shield"))))
 
     def _hit_player(self):
         """Enemy bullet / boss contact. A shield charge absorbs the hit before a life is lost."""
@@ -1750,6 +1859,8 @@ class World:
             if self._char_locked(k) and self.stage_no >= self._unlock_stage(k):
                 self.unlocked.add(k)
                 banner = f"STAGE CLEAR · {self.chars[k]['name']} 해금!"
+        if self._equip_msg:                     # keep the equipment pickup visible through the clear screen
+            banner += f" · {self._equip_msg}"
         self._set_banner(banner)
         self._set_state("stage_clear")
 
@@ -1778,7 +1889,8 @@ ZONE_KEYS = {"kind", "x", "w", "h", "t", "ttl"}
 PLAYER_KEYS = {"x", "y", "anim", "frame", "flip", "palette", "scale", "invincible", "visible", "element"}
 ENEMY_KEYS = {"id", "x", "y", "anim", "frame", "flip", "palette", "scale", "label", "hp", "hp_max", "boss",
               "element", "mid"}
-BULLET_KEYS = {"x", "y", "w", "h", "owner", "kind"}
+BULLET_KEYS = {"x", "y", "w", "h", "owner", "kind", "sprite", "anim", "frame", "flip"}
+BULLET_KINDS = ("normal", "laser", "missile", "proj")
 ITEM_KEYS = {"x", "y", "kind", "t"}
 EFFECT_KEYS = {"kind", "x", "y", "t", "text"}
 EFFECT_KINDS = ("hit", "spark", "text", "elem")
@@ -1786,7 +1898,7 @@ HUD_KEYS = {"lives", "score", "best", "stage_no", "stage_name", "difficulty", "b
             "banner", "banner_t", "char_name", "select_index", "char_names", "continue_stage", "show_enemy_hp",
             "weapon", "weapon_label", "weapon_left", "shield", "shield_max", "melee_t", "skill_label", "skill_cd",
             "char_locked", "shop", "element", "element_name", "element_names", "element_index", "stats",
-            "char_stats", "element_colors"}
+            "char_stats", "element_colors", "equip", "equip_labels"}
 BRAWLER_ANIMS = {"idle", "run", "attack", "attack2", "hurt", "death", "jump"}
 ALL_KEYS = {"left", "right", "up", "down", "jump", "fire", "pause", "quit", "confirm", "sel_left", "sel_right",
             "skill"}
@@ -1801,14 +1913,24 @@ def _check_snapshot(s: dict):
         assert e["scale"] in (2, 4, 6)
         assert e["element"] is None or e["element"] in ELEMENT_KEYS
         if e["mid"]:
-            assert e["boss"] and e["anim"] in BRAWLER_ANIMS, e["anim"]
+            assert e["boss"]
     assert s["player"]["element"] in ELEMENT_KEYS
     h = s["hud"]
     assert h["element"] == ELEMENT_KEYS[h["element_index"]] and len(h["element_names"]) == len(ELEMENT_KEYS)
     assert set(h["element_colors"]) == set(ELEMENT_KEYS) and len(h["char_stats"]) == len(CHAR_KEYS)
+    assert set(h["equip"]) == set(EQUIP_ORDER) == set(h["equip_labels"])
+    assert all(isinstance(v, int) and v >= 0 for v in h["equip"].values())
+    if h["shop"] is not None:
+        assert set(h["shop"]) == {"index", "items", "msg", "stats"}
+        for row in h["shop"]["items"]:
+            assert row["max"] >= 0 and (row["max"] == 0 or row["level"] <= row["max"])
     for b in s["bullets"]:
         assert set(b.keys()) == BULLET_KEYS and b["owner"] in ("player", "enemy")
-        assert b["kind"] in ("normal", "laser", "missile")
+        assert b["kind"] in BULLET_KINDS
+        assert (b["sprite"] is None) == (b["anim"] is None) and isinstance(b["frame"], int)
+        assert isinstance(b["flip"], bool)
+        if b["kind"] == "proj":
+            assert b["sprite"] and b["anim"] == "proj"
     for it in s["items"]:
         assert set(it.keys()) == ITEM_KEYS and it["kind"] in ITEM_KINDS
     assert len(s["items"]) <= MAX_ITEMS
@@ -1878,7 +2000,7 @@ def selftest() -> int:
         if w.state == "play" and w.enemies:
             w._debug_kill_all()
         if w.state == "stage_clear":
-            assert snap["hud"]["banner"] == "STAGE CLEAR"
+            assert snap["hud"]["banner"].startswith("STAGE CLEAR"), snap["hud"]["banner"]
         if w.state == "shop":                   # leave the shop without buying
             w.shop_index = len(SHOP_ORDER) - 1
             w.state_t = 1.0
@@ -2135,28 +2257,32 @@ def selftest() -> int:
     hw._stage_clear()
     _run(hw, 2.1)
     assert hw.state == "shop", hw.state
-    cost = hw._shop_cost("damage")
+    assert SHOP_ORDER[0] == "str" and "damage" not in hw.shop_items
+    cost = hw._shop_cost("str")
+    assert cost == 1500, cost
     hw.score = cost
     hw.state_t = 1.0
     hw.key_down("confirm"); hw.key_up("confirm")
-    assert hw.upgrades["damage"] == 1 and hw.score == 0, (hw.upgrades, hw.score)
+    assert hw.upgrades["str"] == 1 and hw.score == 0, (hw.upgrades, hw.score)
+    assert hw.snapshot()["hud"]["stats"]["str"] == 5 and hw.snapshot()["hud"]["shop"]["stats"]["str"] == 5
     hw.key_down("confirm"); hw.key_up("confirm")
-    assert hw.upgrades["damage"] == 1 and "부족" in hw.snapshot()["hud"]["shop"]["msg"]
+    assert hw.upgrades["str"] == 1 and "부족" in hw.snapshot()["hud"]["shop"]["msg"]
     _check_snapshot(hw.snapshot())
     hw.key_down("left"); hw.key_up("left")      # wraps to "next"
     hw.key_down("confirm"); hw.key_up("confirm")
     assert hw.state == "play" and hw.stage_no == 2, (hw.state, hw.stage_no)
     sd = json.loads(json.dumps(hw.save_data()))
-    assert sd["upgrades"]["damage"] == 1 and sd["stage"] == 2
+    assert sd["upgrades"]["str"] == 1 and sd["stage"] == 2
     cw = World(stages, config, sd, 1920, 340, seed=36)
     _run(cw, 0.3); cw.key_down("confirm"); cw.key_up("confirm")
     assert cw.state == "continue"
     _run(cw, 0.3); cw.key_down("confirm"); cw.key_up("confirm")
-    assert cw.state == "play" and cw.upgrades["damage"] == 1
+    assert cw.state == "play" and cw.upgrades["str"] == 1 and cw._eff_stats(cw.char)["str"] == 5
+    cw.upgrades["str"] = 2                        # jaehwi str 4 -> 6 -> phys 2
     cw.bullets.clear()
     cw.key_down("fire"); cw.update(DT)
-    assert any(b.owner == "player" and b.dmg == 2 for b in cw.bullets), "damage upgrade applies to shots"
-    print(f"PASS 10: shop buys with score (damage cost {cost}), next stage, upgrades kept on continue")
+    assert any(b.owner == "player" and b.dmg == 2 for b in cw.bullets), "str upgrade applies to shots"
+    print(f"PASS 10: shop buys with score (str cost {cost}), next stage, upgrades kept on continue")
 
     # 11) hidden character: locked until the unlock stage is cleared, then selectable
     uw = World(stages, config, {}, 1920, 340, seed=37)
@@ -2210,6 +2336,8 @@ def selftest() -> int:
 
     # 13) mid boss: spawns after waves//2 on stage 2, mid=True + boss_hp shown, waves resume, stage still clears
     assert stages.get("mid_bosses") and "boss_mai" in stages["ranks"] and "boss_choi" in stages["ranks"]
+    mid_ranks = {m["rank"] for m in stages["mid_bosses"]}
+    assert mid_ranks == {"teamlead", "general", "deputy"}, mid_ranks
     bw = World(stages, config, {}, 1600, 360, seed=51)
     bw._start_game(2)
     waves = bw.stage["waves"]
@@ -2225,8 +2353,8 @@ def selftest() -> int:
         mids = [e for e in bw.enemies if e.mid and e.alive]
         if bw.phase == "midboss" and mids:
             m = mids[0]
-            assert m.boss and m.pattern == "brawler" and m.palette in ("mai", "choi") and m.element in ELEMENT_KEYS
-            assert m.w == stages["ranks"][m.rank]["hit_w"] and m.h == stages["ranks"][m.rank]["hit_h"]
+            assert m.boss and m.pattern == "mid" and m.rank in mid_ranks and m.element in ELEMENT_KEYS
+            assert m.scale == 4 and m.palette == m.rank, (m.scale, m.palette)
             assert snap["hud"]["boss_hp"] is not None and snap["hud"]["boss_hp"] == m.hp
             assert any(e["mid"] for e in snap["enemies"])
             if not saw_mid:
@@ -2266,14 +2394,15 @@ def selftest() -> int:
     assert dw2.state == "play" and dw2.phase == "midboss" and dw2.wave_index == wave_before and not dw2.mid_done
     _run(dw2, 1.5)
     assert any(e.mid and e.alive for e in dw2.enemies), "mid boss must respawn after death"
-    # brawler AI actually fights: melee contact or attack2 shot within a few seconds
+    # brawler AI (stage final boss) actually fights: melee contact or attack2 shot within a few seconds
     fw2 = World(stages, config, {"char": "jaehwi"}, 1600, 360, seed=54)
     fw2._start_game(2)
     fw2.enemies.clear(); fw2.pending.clear()
-    fw2.phase = "midboss"; fw2.boss_gap = 0.0
-    fw2._spawn_mid_boss()
+    fw2.phase = "boss"; fw2.boss_gap = 0.0
+    fw2._spawn_boss()
     mb = fw2.boss_ref
-    assert mb is not None and mb.mid
+    assert mb is not None and not mb.mid and mb.pattern == "brawler" and mb.palette in ("mai", "choi", "chang")
+    assert mb.w == stages["ranks"][mb.rank]["hit_w"] and mb.h == stages["ranks"][mb.rank]["hit_h"]
     anims = set()
     saw_shot = False
     fw2.player.shield = 99                    # survive contact hits, count them via shield loss
@@ -2343,6 +2472,215 @@ def selftest() -> int:
     assert legacy.snapshot()["hud"]["stats"] is None
     _check_snapshot(legacy.snapshot())
     print(f"PASS 14: element select via up/down, save round-trip, stats-derived speed {dist}")
+
+    # 15) stage final bosses rotate through final_bosses (dept title kept); mid bosses are palette bosses
+    fb = stages["final_bosses"]
+    assert fb == ["boss_mai", "boss_choi", "boss_chang"], fb
+    for k in fb:
+        r = stages["ranks"][k]
+        assert r["pattern"] == "brawler" and r["boss_scale"] == 2 and set(r["proj"]) == {"speed", "w", "h"}, k
+    assert stages["ranks"]["boss_mai"]["boss_hp"] == 150 and stages["ranks"]["boss_choi"]["boss_hp"] == 170
+    assert stages["ranks"]["boss_chang"]["boss_hp"] == 190 and stages["ranks"]["boss_chang"]["title"] == "본부장 대행"
+    assert stages["ranks"]["intern"]["hp"] == 3 and stages["ranks"]["teamlead"]["boss_hp"] == 60
+    sw2 = World(stages, config, {}, 1600, 360, seed=71)
+    for n, want in ((1, "boss_mai"), (2, "boss_choi"), (3, "boss_chang"), (4, "boss_mai"), (10, "boss_mai"),
+                    (15, "boss_chang"), (16, "boss_mai")):
+        st = sw2._build_stage(n)
+        assert st["kind"] == "dept" and st["bosses"] == [want], (n, st["bosses"])
+        assert st["boss_titles"] == [stages["departments"][st["dept_idx"]]["boss_title"]], (n, st["boss_titles"])
+    assert sw2._build_stage(1)["boss_titles"] == ["총무팀장"]
+    assert sw2._build_stage(11)["bosses"] == ["director"] * 3 and sw2._build_stage(12)["bosses"] == ["md", "evp"]
+    assert sw2._build_stage(13)["bosses"] == ["ceo"] and sw2._build_stage(14)["bosses"] == ["chairman"]
+    sw2._start_game(1)
+    sw2.enemies.clear(); sw2.pending.clear()
+    sw2.phase = "boss"; sw2._spawn_boss()
+    fbe = sw2.boss_ref
+    assert fbe.rank == "boss_mai" and fbe.label == "총무팀장" and fbe.palette == "mai" and not fbe.mid
+    assert fbe.hp_max == 150, fbe.hp_max
+    for n, want, title in ((2, "teamlead", "팀장 대행"), (3, "general", "감사 부장"), (4, "general", "감사 부장"),
+                           (5, "deputy", "기획 차장")):
+        mw2 = World(stages, config, {}, 1600, 360, seed=72)
+        mw2._start_game(n)
+        mw2.enemies.clear(); mw2.pending.clear()
+        mw2.phase = "midboss"; mw2._spawn_mid_boss()
+        m = mw2.boss_ref
+        assert m is not None and m.mid and m.boss and m.rank == want and m.label == title, (n, m.rank, m.label)
+        assert m.pattern == "mid" and m.scale == 4 and mw2.snapshot()["hud"]["boss_hp"] == m.hp
+        assert any(e["mid"] for e in mw2.snapshot()["enemies"])
+    print("PASS 15: final bosses mai/choi/chang rotate by stage (dept title kept); palette mid bosses")
+
+    # 16) equipment: granted by a department stage's final boss, slot order, save round-trip, effects
+    qw = World(stages, config, {"char": "hyunki"}, 1600, 360, seed=81)
+    qw._start_game(1)
+    qw.enemies.clear(); qw.pending.clear(); qw.effects.clear()
+    assert qw.equip == {"hat": 0, "gloves": 0, "suit": 0, "shoes": 0}
+    assert qw.snapshot()["hud"]["equip_labels"] == {"hat": "안전모", "gloves": "작업 장갑", "suit": "사신 정장",
+                                                     "shoes": "운동화"}
+    # a mid boss must not grant
+    mid = qw._make_enemy("teamlead", 900.0, boss=True, title="x"); mid.mid = True
+    qw.enemies.append(mid); qw._damage_enemy(mid, 10 ** 9)
+    assert sum(qw.equip.values()) == 0
+    qw.enemies.clear(); qw.boss_ref = None
+    order = []
+    for i in range(5):
+        qw.phase = "boss"; qw.boss_index = 0
+        qw._spawn_boss()
+        b = qw.boss_ref
+        qw.effects.clear()
+        qw._damage_enemy(b, 10 ** 9)
+        assert not b.alive
+        order.append(qw._equip_msg)
+        assert qw.banner == qw._equip_msg and qw.banner_ttl == EQUIP_BANNER_T, (qw.banner, qw.banner_ttl)
+        assert any(f["kind"] == "text" and "Lv" in (f["text"] or "") for f in qw.effects)
+        qw.enemies.clear(); qw.boss_ref = None
+    assert qw.equip == {"hat": 2, "gloves": 1, "suit": 1, "shoes": 1}, qw.equip
+    assert order == ["장비 획득 · 안전모 Lv1", "장비 획득 · 작업 장갑 Lv1", "장비 획득 · 사신 정장 Lv1",
+                     "장비 획득 · 운동화 Lv1", "장비 획득 · 안전모 Lv2"], order
+    assert qw.snapshot()["hud"]["equip"] == qw.equip
+    # executive stage bosses never grant
+    xw = World(stages, config, {}, 1600, 360, seed=82)
+    xw._start_game(11)
+    xw.enemies.clear(); xw.pending.clear()
+    xw.phase = "boss"; xw._spawn_boss(); xw._damage_enemy(xw.boss_ref, 10 ** 9)
+    assert sum(xw.equip.values()) == 0
+    # effects: hat -> shield max, gloves -> fire rate, shoes -> speed / jump, suit -> magic
+    assert qw._shield_max() == 3 + 2, qw._shield_max()
+    assert qw.snapshot()["hud"]["shield_max"] == 5
+    assert abs(qw._speed_mult(qw.char) - 0.94 * 1.12) < 1e-9 and abs(qw._jump_mult(qw.char) - 0.96 * 1.08) < 1e-9
+    assert qw._magic_dmg(qw.char) == 1 + 1, qw._magic_dmg(qw.char)
+    assert abs(qw._fire_rate_mult(qw.char) - 1.2) < 1e-9
+    base_w = World(stages, config, {"char": "hyunki"}, 1600, 360, seed=83)
+    base_w._start_game(1)
+    assert abs(base_w._fire_rate_mult(base_w.char) - 1.0) < 1e-9 and base_w._shield_max() == 3
+    for ww in (qw, base_w):
+        ww.enemies.clear(); ww.pending.clear(); ww.bullets.clear()
+        ww._reset_player(); ww.player.x = 600.0
+        ww.key_down("fire"); ww.update(DT); ww.key_up("fire")
+    assert qw.player.fire_cd < base_w.player.fire_cd, (qw.player.fire_cd, base_w.player.fire_cd)
+    assert qw.player.shield == 5 and base_w.player.shield == 3
+    # save round-trip: kept on continue, reset on new game
+    qw._start_stage(2)
+    sd = json.loads(json.dumps(qw.save_data()))
+    assert sd["equip"] == {"hat": 2, "gloves": 1, "suit": 1, "shoes": 1} and sd["stage"] == 2
+    rw = World(stages, config, sd, 1600, 360, seed=84)
+    assert rw.snapshot()["hud"]["equip"] == {"hat": 0, "gloves": 0, "suit": 0, "shoes": 0}
+    _run(rw, 0.3); rw.key_down("confirm"); rw.key_up("confirm")
+    assert rw.state == "continue"
+    _run(rw, 0.3); rw.key_down("confirm"); rw.key_up("confirm")
+    assert rw.state == "play" and rw.stage_no == 2 and rw.equip == sd["equip"] and rw._shield_max() == 5
+    _check_snapshot(rw.snapshot())
+    nw = World(stages, config, sd, 1600, 360, seed=85)
+    _run(nw, 0.3); nw.key_down("confirm"); nw.key_up("confirm")
+    nw.key_down("right"); nw.key_up("right")
+    _run(nw, 0.3); nw.key_down("confirm"); nw.key_up("confirm")
+    assert nw.state == "play" and nw.stage_no == 1 and sum(nw.equip.values()) == 0
+    # the clear banner carries the pickup
+    qw2 = World(stages, config, {}, 1600, 360, seed=86)
+    qw2._start_game(1)
+    qw2.enemies.clear(); qw2.pending.clear()
+    qw2.phase = "boss"; qw2._spawn_boss(); qw2._damage_enemy(qw2.boss_ref, 10 ** 9)
+    _run(qw2, 1.0)
+    assert qw2.state == "stage_clear" and qw2.snapshot()["hud"]["banner"] == "STAGE CLEAR · 장비 획득 · 안전모 Lv1"
+    print(f"PASS 16: equipment granted by stage bosses in slot order {list(qw.equip.items())}, saved, effects apply")
+
+    # 17) stat shop: str -> phys dmg, int -> bullet speed + magic, agi -> speed; max 0 unlimited; item tweaks
+    tw = _quiet("jaehwi", 91)                    # jaehwi 8/4/4
+    def _shot(world):
+        world.bullets.clear(); world.player.fire_cd = 0.0
+        world.key_down("fire"); world.update(DT); world.key_up("fire")
+        return [b for b in world.bullets if b.owner == "player"]
+    b0 = _shot(tw)[0]
+    assert b0.dmg == 1 and b0.mdmg == 1 and abs(b0.vx - BULLET_SPEED * 0.92) < 1e-6, (b0.dmg, b0.mdmg, b0.vx)
+    tw.upgrades["str"] = 2
+    assert tw._eff_stats(tw.char) == {"agi": 8, "str": 6, "int": 4} and tw.snapshot()["hud"]["stats"]["str"] == 6
+    assert _shot(tw)[0].dmg == 2
+    tw.upgrades["int"] = 2                       # int 6 -> vx 700 * 1.08, magic 2
+    b2 = _shot(tw)[0]
+    assert abs(b2.vx - BULLET_SPEED * 1.08) < 1e-6 and b2.mdmg == 2, (b2.vx, b2.mdmg)
+    sp0 = tw._speed_mult(tw.char)
+    tw.upgrades["agi"] = 2
+    assert abs(tw._speed_mult(tw.char) - (sp0 + 0.12)) < 1e-9 and abs(tw._jump_mult(tw.char) - 1.2) < 1e-9
+    tw.upgrades["str"] = 50
+    tw._open_shop()
+    tw.score = 10 ** 9
+    view = tw._shop_view()
+    row = next(r for r in view["items"] if r["key"] == "str")
+    assert row["max"] == 0 and row["level"] == 50 and row["afford"], row
+    assert view["stats"] == {"agi": 10, "str": 54, "int": 6}
+    assert [r["key"] for r in view["items"]] == list(SHOP_ORDER)
+    tw.shop_index = 0; tw.state_t = 1.0
+    tw.key_down("confirm"); tw.key_up("confirm")
+    assert tw.upgrades["str"] == 51 and "Lv51" in tw.shop_msg, (tw.upgrades["str"], tw.shop_msg)
+    rate_row = next(r for r in view["items"] if r["key"] == "rate")
+    assert rate_row["max"] == 5
+    _check_snapshot(tw.snapshot())
+    tw._set_state("play")
+    tw.upgrades = {k: 0 for k in tw.shop_items}
+    # items: missile ttl None + speed, spread ±0.087 rad, laser dmg halved
+    tw._give_item("homing")
+    m = _shot(tw)[0]
+    assert m.kind == "missile" and m.ttl is None and abs(abs(m.vx) - MISSILE_SPEED * 0.92) < 1e-6, (m.ttl, m.vx)
+    assert MISSILE_SPEED == 860.0
+    tw._give_item("spread")
+    sb = _shot(tw)
+    assert len(sb) == 3
+    angs = sorted(round(math.atan2(b.vy, abs(b.vx)), 3) for b in sb)
+    assert angs == [-0.087, 0.0, 0.087], angs
+    tw._give_item("laser")
+    lz = _shot(tw)[0]
+    assert lz.kind == "laser" and lz.dmg == max(1, (1 + 1) // 2) == 1
+    hw4 = _quiet("hyunki", 92)                   # str 8 -> phys 2 -> laser (2+1)//2 = 1
+    hw4._give_item("laser")
+    assert _shot(hw4)[0].dmg == 1
+    hw4.upgrades["str"] = 4                      # str 12 -> phys 4 -> laser 2
+    assert _shot(hw4)[0].dmg == 2
+    print("PASS 17: stat shop str/agi/int effects, unlimited levels, missile/spread/laser tweaks")
+
+    # 18) brawler "proj" bullets carry sprite / anim / frame / flip through the snapshot
+    pw = _quiet("jaehwi", 93)
+    for key, w_h in (("boss_chang", (34, 34)), ("boss_mai", (40, 22)), ("boss_choi", (48, 24))):
+        pw.enemies.clear(); pw.bullets.clear()
+        be = pw._make_enemy(key, pw.player.x + 400, boss=True)
+        be.intro = False; be.facing = -1
+        pw.enemies.append(be)
+        pw._brawler_shot(be)
+        pb = pw.bullets[-1]
+        assert pb.kind == "proj" and pb.sprite == be.palette and pb.anim == "proj" and pb.frame == 0
+        assert (pb.w, pb.h) == w_h and pb.owner == "enemy" and pb.vx < 0
+        spd = ENEMY_BULLET_SPEED * stages["ranks"][key]["proj"]["speed"]
+        assert abs(math.hypot(pb.vx, pb.vy) - spd) < 1e-6
+        snapb = [b for b in pw.snapshot()["bullets"] if b["kind"] == "proj"][-1]
+        assert snapb["sprite"] == be.palette and snapb["anim"] == "proj" and snapb["frame"] == 0 and snapb["flip"]
+        _check_snapshot(pw.snapshot())
+    pw.player.inv_t = 99.0
+    _run(pw, 0.5)
+    assert pw.bullets and pw.bullets[-1].frame == 4, pw.bullets[-1].frame     # 8 fps
+    assert pw.snapshot()["bullets"][-1]["frame"] == 4
+    pw.enemies.clear(); pw.bullets.clear()
+    plain = pw._make_enemy("director", pw.player.x + 400, boss=True)
+    plain.pattern = "brawler"; plain.intro = False
+    pw.enemies.append(plain); pw._brawler_shot(plain)
+    assert pw.bullets[-1].kind == "normal" and pw.bullets[-1].sprite is None and pw.bullets[-1].anim is None
+    snapn = pw.snapshot()["bullets"][-1]
+    assert snapn["sprite"] is None and snapn["anim"] is None and snapn["frame"] == 0 and snapn["flip"] is True
+    # a real fight on stage 3 (chang) produces proj bullets
+    cw3 = World(stages, config, {"char": "jaehwi"}, 1600, 360, seed=94)
+    cw3._start_game(3)
+    cw3.enemies.clear(); cw3.pending.clear()
+    cw3.phase = "boss"; cw3.boss_gap = 0.0; cw3._spawn_boss()
+    assert cw3.boss_ref.rank == "boss_chang"
+    cw3.player.shield = 99
+    saw_proj = False
+    for _ in range(int(12 / DT)):
+        cw3.update(DT)
+        cw3.player.inv_t = 0.0
+        s = cw3.snapshot()
+        _check_snapshot(s)
+        saw_proj = saw_proj or any(b["kind"] == "proj" and b["sprite"] == "chang" for b in s["bullets"])
+        if saw_proj:
+            break
+    assert saw_proj, "chang never threw its ball"
+    print("PASS 18: brawler proj bullets: sprite/anim/frame/flip in snapshot, 8 fps anim")
 
     dtms = (time.perf_counter() - t0) * 1000
     print(f"SELFTEST OK ({dtms:.0f} ms)")

@@ -232,13 +232,13 @@
     "intern": {
       "title": "인턴",
       "kind": "grunt",
-      "hp": 1,
+      "hp": 3,
       "speed": 40,
       "fire_rate": 0.15,
       "score": 100,
       "scale": 2,
       "boss": false,
-      "boss_hp": 8,
+      "boss_hp": 40,
       "boss_scale": 4,
       "boss_score": 1000,
       "pattern": "mid"
@@ -246,13 +246,13 @@
     "staff": {
       "title": "사원",
       "kind": "grunt",
-      "hp": 1,
+      "hp": 3,
       "speed": 50,
       "fire_rate": 0.2,
       "score": 200,
       "scale": 2,
       "boss": false,
-      "boss_hp": 8,
+      "boss_hp": 40,
       "boss_scale": 4,
       "boss_score": 1000,
       "pattern": "mid"
@@ -260,13 +260,13 @@
     "assistant": {
       "title": "대리",
       "kind": "grunt",
-      "hp": 1,
+      "hp": 3,
       "speed": 60,
       "fire_rate": 0.3,
       "score": 300,
       "scale": 2,
       "boss": false,
-      "boss_hp": 10,
+      "boss_hp": 50,
       "boss_scale": 4,
       "boss_score": 1000,
       "pattern": "mid"
@@ -274,13 +274,13 @@
     "manager": {
       "title": "과장",
       "kind": "grunt",
-      "hp": 1,
+      "hp": 3,
       "speed": 70,
       "fire_rate": 0.4,
       "score": 400,
       "scale": 2,
       "boss": false,
-      "boss_hp": 10,
+      "boss_hp": 50,
       "boss_scale": 4,
       "boss_score": 1000,
       "pattern": "mid"
@@ -288,13 +288,13 @@
     "deputy": {
       "title": "차장",
       "kind": "elite",
-      "hp": 2,
+      "hp": 6,
       "speed": 110,
       "fire_rate": 0.5,
       "score": 300,
       "scale": 2,
       "boss": false,
-      "boss_hp": 12,
+      "boss_hp": 60,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid"
@@ -302,13 +302,13 @@
     "general": {
       "title": "부장",
       "kind": "elite",
-      "hp": 2,
+      "hp": 6,
       "speed": 120,
       "fire_rate": 0.6,
       "score": 300,
       "scale": 2,
       "boss": false,
-      "boss_hp": 18,
+      "boss_hp": 90,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid",
@@ -317,13 +317,13 @@
     "teamlead": {
       "title": "팀장",
       "kind": "elite",
-      "hp": 3,
+      "hp": 9,
       "speed": 130,
       "fire_rate": 0.7,
       "score": 300,
       "scale": 2,
       "boss": false,
-      "boss_hp": 12,
+      "boss_hp": 60,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid",
@@ -332,13 +332,13 @@
     "director": {
       "title": "실장",
       "kind": "boss",
-      "hp": 24,
+      "hp": 72,
       "speed": 100,
       "fire_rate": 0.8,
       "score": 2000,
       "scale": 4,
       "boss": true,
-      "boss_hp": 24,
+      "boss_hp": 120,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid"
@@ -346,13 +346,13 @@
     "md": {
       "title": "상무",
       "kind": "boss",
-      "hp": 30,
+      "hp": 90,
       "speed": 110,
       "fire_rate": 0.9,
       "score": 2000,
       "scale": 4,
       "boss": true,
-      "boss_hp": 30,
+      "boss_hp": 150,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid"
@@ -360,13 +360,13 @@
     "evp": {
       "title": "전무",
       "kind": "boss",
-      "hp": 36,
+      "hp": 108,
       "speed": 120,
       "fire_rate": 1.0,
       "score": 2000,
       "scale": 4,
       "boss": true,
-      "boss_hp": 36,
+      "boss_hp": 180,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid"
@@ -374,13 +374,13 @@
     "ceo": {
       "title": "CEO",
       "kind": "final",
-      "hp": 60,
+      "hp": 180,
       "speed": 110,
       "fire_rate": 1.0,
       "score": 10000,
       "scale": 6,
       "boss": true,
-      "boss_hp": 60,
+      "boss_hp": 300,
       "boss_scale": 6,
       "boss_score": 10000,
       "pattern": "final"
@@ -388,13 +388,13 @@
     "chairman": {
       "title": "회장",
       "kind": "final",
-      "hp": 100,
+      "hp": 300,
       "speed": 100,
       "fire_rate": 1.0,
       "score": 10000,
       "scale": 6,
       "boss": true,
-      "boss_hp": 100,
+      "boss_hp": 500,
       "boss_scale": 6,
       "boss_score": 10000,
       "pattern": "chairman"
@@ -402,13 +402,13 @@
     "lab1": {
       "title": "연구원",
       "kind": "grunt",
-      "hp": 1,
+      "hp": 3,
       "speed": 55,
       "fire_rate": 0.25,
       "score": 100,
       "scale": 2,
       "boss": false,
-      "boss_hp": 10,
+      "boss_hp": 50,
       "boss_scale": 4,
       "boss_score": 1000,
       "pattern": "mid"
@@ -416,13 +416,13 @@
     "lab2": {
       "title": "선임연구원",
       "kind": "grunt",
-      "hp": 1,
+      "hp": 3,
       "speed": 70,
       "fire_rate": 0.4,
       "score": 200,
       "scale": 2,
       "boss": false,
-      "boss_hp": 10,
+      "boss_hp": 50,
       "boss_scale": 4,
       "boss_score": 1000,
       "pattern": "mid"
@@ -430,13 +430,13 @@
     "lab3": {
       "title": "책임연구원",
       "kind": "elite",
-      "hp": 2,
+      "hp": 6,
       "speed": 120,
       "fire_rate": 0.6,
       "score": 300,
       "scale": 2,
       "boss": false,
-      "boss_hp": 14,
+      "boss_hp": 70,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid"
@@ -444,13 +444,13 @@
     "lab4": {
       "title": "수석연구원",
       "kind": "elite",
-      "hp": 3,
+      "hp": 9,
       "speed": 130,
       "fire_rate": 0.7,
       "score": 300,
       "scale": 2,
       "boss": false,
-      "boss_hp": 16,
+      "boss_hp": 80,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid"
@@ -458,13 +458,13 @@
     "lab5": {
       "title": "연구소장",
       "kind": "boss",
-      "hp": 24,
+      "hp": 72,
       "speed": 100,
       "fire_rate": 0.9,
       "score": 2000,
       "scale": 4,
       "boss": true,
-      "boss_hp": 24,
+      "boss_hp": 120,
       "boss_scale": 4,
       "boss_score": 2000,
       "pattern": "mid"
@@ -475,18 +475,23 @@
       "sprite": "mai",
       "hit_w": 44,
       "hit_h": 96,
-      "hp": 40,
+      "hp": 90,
       "speed": 150,
       "fire_rate": 0.8,
       "score": 3000,
       "scale": 2,
       "boss": true,
-      "boss_hp": 40,
+      "boss_hp": 150,
       "boss_scale": 2,
       "boss_speed": 150,
       "boss_score": 3000,
       "pattern": "brawler",
-      "element": "jujak"
+      "element": "jujak",
+      "proj": {
+        "speed": 1.3,
+        "w": 40,
+        "h": 22
+      }
     },
     "boss_choi": {
       "title": "노무 조사관",
@@ -494,18 +499,47 @@
       "sprite": "choi",
       "hit_w": 40,
       "hit_h": 90,
-      "hp": 46,
+      "hp": 102,
       "speed": 170,
       "fire_rate": 0.8,
       "score": 3000,
       "scale": 2,
       "boss": true,
-      "boss_hp": 46,
+      "boss_hp": 170,
       "boss_scale": 2,
       "boss_speed": 170,
       "boss_score": 3000,
       "pattern": "brawler",
-      "element": "baekho"
+      "element": "baekho",
+      "proj": {
+        "speed": 1.5,
+        "w": 48,
+        "h": 24
+      }
+    },
+    "boss_chang": {
+      "title": "본부장 대행",
+      "kind": "boss",
+      "sprite": "chang",
+      "hit_w": 64,
+      "hit_h": 100,
+      "hp": 114,
+      "speed": 120,
+      "fire_rate": 0.7,
+      "score": 3000,
+      "scale": 2,
+      "boss": true,
+      "boss_hp": 190,
+      "boss_scale": 2,
+      "boss_speed": 120,
+      "boss_score": 3000,
+      "pattern": "brawler",
+      "element": "hyeonmu",
+      "proj": {
+        "speed": 1.0,
+        "w": 34,
+        "h": 34
+      }
     }
   },
   "difficulty": {
@@ -542,16 +576,26 @@
     "drop_grunt": 0.1,
     "drop_elite": 0.3
   },
+  "final_bosses": [
+    "boss_mai",
+    "boss_choi",
+    "boss_chang"
+  ],
   "mid_bosses": [
     {
-      "rank": "boss_mai",
-      "title": "외부 감사관",
+      "rank": "teamlead",
+      "title": "팀장 대행",
       "from_stage": 2
     },
     {
-      "rank": "boss_choi",
-      "title": "노무 조사관",
+      "rank": "general",
+      "title": "감사 부장",
       "from_stage": 3
+    },
+    {
+      "rank": "deputy",
+      "title": "기획 차장",
+      "from_stage": 4
     }
   ]
 }

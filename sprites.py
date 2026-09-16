@@ -10,10 +10,12 @@ full-colour frame sets from ``assets_chars`` (see tools/import_char_sheets.py)
 instead of the palette-swapped shared frames.  Their frame sizes and anchors
 differ per character, so pass ``palette`` to ``size()`` / ``anchor()``.
 
-Mid bosses (``assets_boss``, keys ``mai`` / ``choi``) are merged into ``CHAR_FRAMES``
-and carry their own animation tables in ``CHAR_ANIMS[palette]`` (idle, run, attack,
-attack2, hurt, death, jump).  Shared anim names a boss lacks fall back through
-``ANIM_ALIAS`` (shoot -> attack, fall -> jump, ...), else ``idle``.
+Mid bosses (``assets_boss``, keys ``mai`` / ``choi`` / ``chang``) are merged into
+``CHAR_FRAMES`` and carry their own animation tables in ``CHAR_ANIMS[palette]`` (idle,
+run, attack, attack2, hurt, death, jump, proj).  Shared anim names a boss lacks fall
+back through ``ANIM_ALIAS`` (shoot -> attack, fall -> jump, ...), else ``idle``.
+``proj`` is the boss's projectile sprite (centre-anchored, flying right); ``BOSS_PROJ``
+gives its 1x (w, h) per key.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ import assets_boss
 import assets_chars
 import assets_data
 import assets_extra
+from assets_boss import BOSS_PROJ
 
 CLASSES = assets_data.CLASSES
 CHAR_FRAMES = {**assets_chars.CHAR_FRAMES, **assets_boss.BOSS_FRAMES}
@@ -281,6 +284,6 @@ class SpriteBank:
 
 
 __all__ = ["PALETTES", "SpriteBank", "CLASSES", "CHAR_FRAMES", "CHAR_ANIMS", "CHAR_ANIM_FPS", "ANIM_ALIAS",
-           "FRAMES", "ANIMS", "ANIM_FPS",
+           "BOSS_PROJ", "FRAMES", "ANIMS", "ANIM_FPS",
            "shade_color", "palette_lut",
            "encode_png", "render_rgba_rows", "frame_data"]

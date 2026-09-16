@@ -121,6 +121,7 @@ class Renderer:
         self.aura_ring = None                       # 플레이어 몸 뒤 맥동 링
         self.enemy_items: dict[int, dict] = {}     # id -> {"img","label","hp","hpbg","ring"}
         self.bullet_pool: list[int] = []
+        self.bullet_img_pool: list[int] = []        # v1.7: 스프라이트 탄(보스 투사체) 이미지 풀
         self.item_pool: list[tuple[int, int]] = []
         self.platform_pool: list[int] = []
         self.pit_pool: list[int] = []
@@ -183,6 +184,22 @@ class Renderer:
         ax, ay = self.bank.anchor(anim, int(frame), flip, scale, palette=palette)
         return img, ax, ay
 
+    def _bullet_image(self, b: dict):
+        """v1.7: bullets 항목에 sprite(팔레트 key)·anim 이 있으면 1x 이미지, 아니면 None(사각형으로 그림)."""
+        palette, anim = b.get("sprite"), b.get("anim")
+        if not palette or not anim:
+            return None
+        frame = int(b.get("frame", 0) or 0)
+        try:
+            try:
+                n = self.bank.anim_len(anim, palette)
+            except TypeError:
+                n = self.bank.anim_len(anim)
+            frame = min(max(0, frame), max(0, n - 1))
+            return self.bank.get(anim, frame, palette, bool(b.get("flip")), 1)
+        except (KeyError, TypeError, ValueError, IndexError, tk.TclError):
+            return None
+
     def _pool_get(self, pool: list, factory, idx: int):
         while len(pool) <= idx:
             pool.append(factory())
@@ -191,6 +208,31 @@ class Renderer:
     def _pool_hide_from(self, pool: list, idx: int):
         for it in pool[idx:]:
             self.cv.itemconfig(it, state="hidden")
+
+    @staticmethod
+    def _equip_text(hud: dict) -> str:
+        """v1.7: hud.equip {slot: level} + hud.equip_labels {slot: label} → "장비: 안전모 Lv1 · 운동화 Lv2"."""
+        equip = hud.get("equip") or {}
+        labels = hud.get("equip_labels") or {}
+        if not isinstance(equip, dict):
+            return ""
+        parts = []
+        for slot, lv in equip.items():
+            try:
+                lv = int(lv or 0)
+            except (TypeError, ValueError):
+                continue
+            if lv <= 0:
+                continue
+            parts.append("%s Lv%d" % (labels.get(slot, slot) if isinstance(labels, dict) else slot, lv))
+        return "장비: " + " · ".join(parts) if parts else ""
+
+    @staticmethod
+    def _stats_text(st) -> str:
+        """v1.7: {"str","agi","int"} → "힘 N · 민첩 N · 지혜 N"."""
+        if not isinstance(st, dict):
+            return ""
+        return "힘 %s · 민첩 %s · 지혜 %s" % (st.get("str", "-"), st.get("agi", "-"), st.get("int", "-"))
 
     def _elem_color(self, hud: dict, key) -> str:
         colors = hud.get("element_colors") or {}
@@ -245,6 +287,8 @@ class Renderer:
             elem_mark = self.cv.create_rectangle(0, 0, 0, 0, outline="#ffd166", width=2)
             elem_names = [self._text2(0, 0, "", size=11, anchor="center") for _ in ELEMENT_KEYS]
             self.select_items.append((elem_hint, elem_mark, elem_names))
+            # v1.7: 스탯 설명 한 줄 (스탯 행 아래, 작고 어둡게)
+            self.select_items.append(self._text2(0, 0, "", size=9, anchor="n", bold=False, fill=ELEM_DIM_FG))
 
         panel = self.select_items[0]
         pw, ph = min(self.W - 40, 640), min(self.H - 20, 340)
@@ -295,7 +339,11 @@ class Renderer:
         if eidx is None:
             ekey = hud.get("element")
             eidx = ELEMENT_KEYS.index(ekey) if ekey in ELEMENT_KEYS else 0
-        ey = row_y + 84
+        stat_hint = self.select_items[5 + n]
+        self._set_text2(stat_hint, cx, row_y + 62, "힘=공격력 · 민첩=이동/점프 · 지혜=탄속/마법")
+        for it in stat_hint:
+            self._show(it)
+        ey = row_y + 92
         egap = 96
         ex0 = cx - int((len(ELEMENT_KEYS) - 1) / 2 * egap) + 30
         self._set_text2(elem_hint, ex0 - egap // 2 - 10, ey, "↑↓ 속성")
@@ -467,8 +515,18 @@ class Renderer:
             self._hide(self.aura_ring)
 
         # 탄환
+        n_img = 0
         for i, b in enumerate(snap["bullets"]):
             it = self._pool_get(self.bullet_pool, lambda: self.cv.create_rectangle(0, 0, 0, 0, outline=""), i)
+            # v1.7: sprite 탄(보스 투사체)은 사각형 대신 이미지(중심 앵커). 에셋이 없으면 사각형으로 대체
+            im = self._bullet_image(b)
+            if im is not None:
+                img_it = self._pool_get(self.bullet_img_pool, lambda: self.cv.create_image(0, 0, anchor="center"), n_img)
+                n_img += 1
+                self.cv.coords(img_it, int(b["x"]), int(b["y"]))
+                self.cv.itemconfig(img_it, image=im, state="normal")
+                self._hide(it)
+                continue
             hw, hh = b["w"] / 2, b["h"] / 2
             self.cv.coords(it, b["x"] - hw, b["y"] - hh, b["x"] + hw, b["y"] + hh)   # x,y = 중심
             kind = b.get("kind", "normal")
@@ -482,6 +540,7 @@ class Renderer:
                 fill = PLAYER_BULLET
             self.cv.itemconfig(it, fill=fill, state="normal")
         self._pool_hide_from(self.bullet_pool, len(snap["bullets"]))
+        self._pool_hide_from(self.bullet_img_pool, n_img)
 
         # 서류 스톰 영역: 점선 테두리 + 날리는 서류 조각
         zones = snap.get("zones", [])
@@ -553,6 +612,7 @@ class Renderer:
             self.hud_items["bg"] = self.cv.create_rectangle(0, 0, 0, 0, fill=HUD_BG, outline=HUD_EDGE, width=1)
             self.hud_items["line"] = self._text2(0, 0, "", size=10)
             self.hud_items["elem"] = self._text2(0, 0, "", size=10, anchor="nw")
+            self.hud_items["equip"] = self._text2(0, 0, "", size=9, anchor="nw", bold=False, fill="#c7d2e0")
             self.hud_items["banner"] = self._text2(0, 0, "", size=22, anchor="center", fill="#ffd166")
             self.hud_items["sub"] = self._text2(0, 0, "", size=11, anchor="center", bold=False)
             self.hud_items["bossbg"] = self.cv.create_rectangle(0, 0, 0, 0, fill="#3a1414", outline="#7a2a2a")
@@ -592,7 +652,24 @@ class Renderer:
         else:
             for it in self.hud_items["elem"]:
                 self._hide(it)
-        self.cv.coords(self.hud_items["bg"], 4, 4, right + 20, 30)
+        # v1.7: 장비 줄 "장비: 안전모 Lv1 · 운동화 Lv2" (레벨 0 제외, 없으면 숨김)
+        equip_txt = self._equip_text(hud)
+        bottom = 30
+        if equip_txt:
+            self._set_text2(self.hud_items["equip"], 12, 28, equip_txt)
+            for it in self.hud_items["equip"]:
+                self._show(it)
+            bottom = 46
+            try:
+                bb = self.cv.bbox(self.hud_items["equip"][1])
+                if bb:
+                    right = max(right, bb[2])
+            except Exception:
+                right = max(right, 12 + 9 * len(equip_txt))
+        else:
+            for it in self.hud_items["equip"]:
+                self._hide(it)
+        self.cv.coords(self.hud_items["bg"], 4, 4, right + 20, bottom)
         self._show(self.hud_items["bg"])
         for it in self.hud_items["line"]:
             self._show(it)
@@ -660,7 +737,7 @@ class Renderer:
     # --- 상점 (스테이지 클리어 후)
     def _shop_all_items(self) -> list:
         ui = self.shop_ui
-        items = [ui["panel"], *ui["title"], *ui["score"], *ui["msg"], *ui["help"]]
+        items = [ui["panel"], *ui["title"], *ui["score"], *ui["stats"], *ui["msg"], *ui["help"]]
         for box, label, sub in ui["rows"]:
             items += [box, *label, *sub]
         return items
@@ -672,42 +749,68 @@ class Renderer:
                 for it in self._shop_all_items():
                     self._hide(it)
             return
-        rows = shop["items"]
+        rows = shop.get("items") or []
         if not self.shop_ui:
             self.shop_ui = {
                 "panel": self.cv.create_rectangle(0, 0, 0, 0, fill=HUD_BG, outline=HUD_EDGE, width=2),
                 "title": self._text2(0, 0, "", size=14, anchor="n"),
                 "score": self._text2(0, 0, "", size=11, anchor="n", fill="#ffd166"),
-                "rows": [(self.cv.create_rectangle(0, 0, 0, 0, outline="#ffd166", width=2),
-                          self._text2(0, 0, "", size=11, anchor="n"),
-                          self._text2(0, 0, "", size=9, anchor="n", bold=False, fill="#9fc9ff"))
-                         for _ in rows],
+                "stats": self._text2(0, 0, "", size=10, anchor="n", bold=False, fill="#9fc9ff"),   # v1.7 유효 스탯
+                "rows": [],
                 "msg": self._text2(0, 0, "", size=10, anchor="s", fill="#ffb3b3"),
                 "help": self._text2(0, 0, "", size=9, anchor="s", bold=False, fill="#c7d2e0"),
             }
         ui = self.shop_ui
+        while len(ui["rows"]) < len(rows):          # 항목 수가 늘어도(v1.7: 7개) 풀을 키운다
+            ui["rows"].append((self.cv.create_rectangle(0, 0, 0, 0, outline="#ffd166", width=2),
+                               self._text2(0, 0, "", size=11, anchor="n"),
+                               self._text2(0, 0, "", size=9, anchor="n", bold=False, fill="#9fc9ff")))
         cx, cy = self.W // 2, self.H // 2
-        pw, ph = min(self.W - 40, 720), min(self.H - 20, 230)
-        self.cv.coords(ui["panel"], cx - pw // 2, cy - ph // 2, cx + pw // 2, cy + ph // 2)
-        self._set_text2(ui["title"], cx, cy - ph // 2 + 10, "상점 — 점수로 강화 (쓴 점수는 기록에서 빠짐)")
-        self._set_text2(ui["score"], cx, cy - ph // 2 + 34, "보유 점수 %s" % format(snap["hud"]["score"], ","))
-        cell = (pw - 40) // len(rows)
+        pw, ph = min(self.W - 40, 840), min(self.H - 20, 250)
+        top, bottom = cy - ph // 2, cy + ph // 2
+        self.cv.coords(ui["panel"], cx - pw // 2, top, cx + pw // 2, bottom)
+        self._set_text2(ui["title"], cx, top + 10, "상점 — 점수로 강화 (쓴 점수는 기록에서 빠짐)")
+        self._set_text2(ui["score"], cx, top + 34, "보유 점수 %s" % format(snap["hud"].get("score", 0), ","))
+        # v1.7: 현재 유효 스탯 (상점 포함). shop.stats 우선, 없으면 hud.stats
+        stats_txt = self._stats_text(shop.get("stats") or snap["hud"].get("stats"))
+        self._set_text2(ui["stats"], cx, top + 56, stats_txt)
+        cell = (pw - 40) // max(1, len(rows))
+        # 칸이 좁으면(7개 항목) 라벨 글꼴을 줄인다
+        lsize = 11 if cell >= 110 else (10 if cell >= 92 else 9)
+        ssize = 9 if cell >= 92 else 8
+        sel = shop.get("index", 0)
         for i, (row, (box, label, sub)) in enumerate(zip(rows, ui["rows"])):
             x = cx - pw // 2 + 20 + cell * i + cell // 2
-            self.cv.coords(box, x - cell // 2 + 6, cy - 22, x + cell // 2 - 6, cy + 42)
-            self.cv.itemconfig(box, state="normal" if i == shop["index"] else "hidden")
-            fg = TEXT_FG if row["afford"] else LOCKED_FG
-            self._set_text2(label, x, cy - 12, row["label"], fill=fg)
-            if row["key"] == "next":
+            self.cv.coords(box, x - cell // 2 + 4, cy - 8, x + cell // 2 - 4, cy + 54)
+            self.cv.itemconfig(box, state="normal" if i == sel else "hidden")
+            fg = TEXT_FG if row.get("afford") else LOCKED_FG
+            for it in label:
+                self.cv.itemconfig(it, font=(FONT, lsize, "bold"))
+            for it in sub:
+                self.cv.itemconfig(it, font=(FONT, ssize, "normal"))
+            self._set_text2(label, x, cy + 2, row.get("label", row.get("key", "")), fill=fg)
+            lv, mx = int(row.get("level", 0)), int(row.get("max", 0))
+            if row.get("key") == "next":
                 info = ""
-            elif row["level"] >= row["max"]:
-                info = "최대 (Lv%d)" % row["level"]
+            elif mx <= 0:                                 # v1.7: max 0 = 무제한 → "Lv n" 만
+                info = "%s점 · Lv%d" % (format(row.get("cost", 0), ","), lv)
+            elif lv >= mx:
+                info = "최대 (Lv%d)" % lv
             else:
-                info = "%s점 · Lv%d/%d" % (format(row["cost"], ","), row["level"], row["max"])
-            self._set_text2(sub, x, cy + 12, info)
-        self._set_text2(ui["msg"], cx, cy + ph // 2 - 26, shop.get("msg") or "")
-        self._set_text2(ui["help"], cx, cy + ph // 2 - 8, "← → 선택 · Space 구매 / 다음 스테이지")
-        unselected = {box for j, (box, _l, _s) in enumerate(ui["rows"]) if j != shop["index"]}
+                info = "%s점 · Lv%d/%d" % (format(row.get("cost", 0), ","), lv, mx)
+            self._set_text2(sub, x, cy + 26, info)
+        for box, label, sub in ui["rows"][len(rows):]:
+            self._hide(box)
+            for it in label + sub:
+                self._hide(it)
+        self._set_text2(ui["msg"], cx, bottom - 26, shop.get("msg") or "")
+        self._set_text2(ui["help"], cx, bottom - 8, "← → 선택 · Space 구매 / 다음 스테이지")
+        unselected = {box for j, (box, _l, _s) in enumerate(ui["rows"]) if j != sel}
+        for j, (box, label, sub) in enumerate(ui["rows"]):
+            if j >= len(rows):
+                unselected.add(box)
+                unselected.update(label)
+                unselected.update(sub)
         for it in self._shop_all_items():
             if it not in unselected:
                 self._show(it)
@@ -746,7 +849,7 @@ class App:
         except Exception:
             pass
         try:                                   # v1.6 중간 보스 시트 (팀 A). 에셋이 없어도 기동은 계속
-            self.bank.preload(["mai", "choi"], [1])
+            self.bank.preload(["mai", "choi", "chang"], [1])   # v1.7: chang(뚱뚱보 보스) 포함
         except Exception:
             pass
         self.overlay.root.after(16, self.tick)

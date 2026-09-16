@@ -1,4 +1,4 @@
-"""Import the two KOF-style mid-boss sprite sheets into ``assets_boss.py``.
+"""Import the three KOF-style mid-boss sprite sheets into ``assets_boss.py``.
 
 Dev-only script (Pillow).  Usage:
 
@@ -9,6 +9,7 @@ Sources (palette PNGs, characters facing RIGHT):
 
 * ``적/여자 보스.png`` -> key ``mai``  (Mai Shiranui)
 * ``적/남자 보스.png`` -> key ``choi`` (Choi Bounge)
+* ``적/뚱뚱보 보스.png`` -> key ``chang`` (Chang Koehan, iron ball on a chain)
 
 Sheet layout: cells are magenta (#FF00FF) rectangles separated by 1-px black
 lines / black filler areas.  One animation runs left-to-right along a row, several
@@ -19,12 +20,15 @@ contact sheets written by ``--contact``.
 
 Every frame: opaque = pixels != magenta, cropped to the opaque bbox, alpha 0/255,
 1-px dark outline where the silhouette edge is not already dark (same rule as
-tools/import_char_sheets.py), anchor = bottom-centre of the bbox.
+tools/import_char_sheets.py), anchor = bottom-centre of the bbox.  The "proj" anim
+(the boss's projectile: mai fan / choi claw-wind slash / chang iron ball) is anchored
+at its centre (w//2, h//2) instead - the game draws bullets around their centre.
 
 Output: ``assets_boss.py`` with
     BOSS_FRAMES[key][frame_id] = (w, h, anchor_x, anchor_y, rgba)   (1x, facing right)
-    BOSS_ANIMS[key] = {"idle","run","attack","attack2","hurt","death","jump": [frame_id...]}
+    BOSS_ANIMS[key] = {"idle","run","attack","attack2","hurt","death","jump","proj": [frame_id...]}
     BOSS_ANIM_FPS[key] = {anim: fps}
+    BOSS_PROJ[key] = (w, h)            1x size of proj frame 0 (hitbox reference)
 frame ids are ``<key>_<anim>_<n>``.
 """
 from __future__ import annotations
@@ -44,13 +48,15 @@ PREVIEW_DIR = os.environ.get("BOSS_PREVIEW_DIR") or os.path.join(HERE, "boss_pre
 SOURCES = {
     "mai": os.path.join(ROOT, "적", "여자 보스.png"),
     "choi": os.path.join(ROOT, "적", "남자 보스.png"),
+    "chang": os.path.join(ROOT, "적", "뚱뚱보 보스.png"),
 }
 KEY_COLOR = (255, 0, 255)                     # cell background (palette index maps to exact #FF00FF)
 BLACK = (0, 0, 0)
 OUTLINE = (20, 20, 22, 255)
 DARK_LUMA = 70                                # edge pixels darker than this already read as outline
-ANIM_ORDER = ["idle", "run", "attack", "attack2", "hurt", "death", "jump"]
-ANIM_FPS = {"idle": 8, "run": 10, "attack": 12, "attack2": 10, "hurt": 8, "death": 8, "jump": 8}
+ANIM_ORDER = ["idle", "run", "attack", "attack2", "hurt", "death", "jump", "proj"]
+ANIM_FPS = {"idle": 8, "run": 10, "attack": 12, "attack2": 10, "hurt": 8, "death": 8, "jump": 8, "proj": 12}
+CENTRE_ANCHORED = {"proj"}                    # anims anchored at the frame centre instead of the feet
 
 # hand-picked cells per animation: list of (row, first col, count); ranges are concatenated in
 # order, so a sequence may wrap rows or skip cells.  Picked from the --contact sheets.
@@ -63,6 +69,7 @@ CELLS = {
         "hurt": [(4, 20, 2)],                   # row 4: heavy stand hit (head back, recoil)
         "death": [(5, 3, 3), (5, 10, 3)],       # row 5: knocked back, launched, flip, slide, face down, lying
         "jump": [(1, 1, 4)],                    # row 1: takeoff crouch, rise, apex, tuck
+        "proj": [(15, 15, 4)],                  # row 15: thrown Kachousen - open fan tumbling, white blur trail
     },
     "choi": {
         "idle": [(0, 0, 6)],                    # row 0: hunched stance, claws twitching
@@ -72,6 +79,17 @@ CELLS = {
         "hurt": [(2, 3, 2)],                    # row 2: stand hit (head snapped back, doubled over)
         "death": [(5, 13, 4), (6, 3, 1), (7, 21, 1)],  # stagger, launched back x3, sliding on back, lying face up
         "jump": [(0, 20, 3), (0, 24, 1)],       # row 0: crouch, tuck x2, falling
+        "proj": [(7, 19, 1), (11, 16, 1)],      # horizontal blue claw-wind slashes (thick, thin) - flicker loop
+    },
+    "chang": {
+        "idle": [(0, 1, 8)],                    # row 0: standing stance, ball on the shoulder, breathing
+        "run": [(0, 10, 5)],                    # row 0: heavy walk forward (0,15.. is the crouch)
+        "attack": [(17, 5, 5)],                 # row 17: ball raised overhead, slammed down into the ground
+        "attack2": [(6, 5, 6)],                 # row 6: wind-up, ball flung out forward on the chain, hangs, back
+        "hurt": [(10, 4, 2)],                   # row 10: stand hit (head snapped back, torso back)
+        "death": [(11, 6, 5)],                  # row 11: launched, flipped, falling, lands on back, lying
+        "jump": [(9, 4, 5)],                    # row 9: crouch, rise x2, in the air x2 (chain flying)
+        "proj": [(0, 0, 1)],                    # cell 0,0: the iron ball alone (no chain)
     },
 }
 
@@ -156,8 +174,9 @@ def cut_cell(rgb: Image.Image, box) -> dict:
     return res
 
 
-def build_frame(pixels: dict):
-    """{(x, y): rgba} -> outlined (w, h, ax, ay, rgba bytes); anchor = bottom-centre of the opaque bbox."""
+def build_frame(pixels: dict, centre: bool = False):
+    """{(x, y): rgba} -> outlined (w, h, ax, ay, rgba bytes); anchor = bottom-centre of the opaque bbox,
+    or the frame centre (w//2, h//2) when ``centre`` (projectiles)."""
     xs = [x for x, _ in pixels]
     ys = [y for _, y in pixels]
     bx0, bx1, by0, by1 = min(xs), max(xs), min(ys), max(ys)
@@ -190,6 +209,8 @@ def build_frame(pixels: dict):
         row = out[y * w * 4:(y + 1) * w * 4]
         mirrored += b"".join(row[i:i + 4] for i in range(len(row) - 4, -1, -4))
     ax = w - 1 - ax
+    if centre:
+        ax, ay = w // 2, h // 2
     return w, h, ax, ay, bytes(mirrored)
 
 
@@ -208,7 +229,7 @@ def import_boss(key: str, preview_dir: str | None):
                 if not pixels:
                     raise ValueError(f"{key}/{anim}: cell ({row},{col}) is empty")
                 fid = f"{key}_{anim}_{len(ids)}"
-                frames[fid] = build_frame(pixels)
+                frames[fid] = build_frame(pixels, centre=anim in CENTRE_ANCHORED)
                 ids.append(fid)
         anims[anim] = ids
     if preview_dir:
@@ -245,11 +266,13 @@ def main(argv):
         return 0
     parts = ['"""GENERATED by tools/import_boss_sheets.py - do not edit by hand.',
              "",
-             "Mid-boss RGBA frames cut from 적/여자 보스.png (mai) and 적/남자 보스.png (choi).",
+             "Mid-boss RGBA frames cut from 적/여자 보스.png (mai), 적/남자 보스.png (choi) and",
+             "적/뚱뚱보 보스.png (chang).",
              "BOSS_FRAMES[key][frame_id] = (w, h, anchor_x, anchor_y, rgba); rgba = w*h*4 bytes, row major,",
-             "1x, facing right, anchor = bottom-centre of the opaque bbox (feet).",
-             "BOSS_ANIMS[key][anim] = [frame_id...] for idle/run/attack/attack2/hurt/death/jump;",
-             "BOSS_ANIM_FPS[key][anim] = fps.",
+             "1x, facing right, anchor = bottom-centre of the opaque bbox (feet); the 'proj' frames",
+             "(projectile sprite, flying right) are anchored at their centre (w//2, h//2).",
+             "BOSS_ANIMS[key][anim] = [frame_id...] for idle/run/attack/attack2/hurt/death/jump/proj;",
+             "BOSS_ANIM_FPS[key][anim] = fps; BOSS_PROJ[key] = (w, h) of proj frame 0 (1x, hitbox reference).",
              '"""',
              "import base64 as _b64",
              "import zlib as _zlib",
@@ -257,6 +280,7 @@ def main(argv):
              "BOSS_FRAMES = {}",
              "BOSS_ANIMS = {}",
              "BOSS_ANIM_FPS = {}",
+             "BOSS_PROJ = {}",
              ""]
     preview = None if "--no-preview" in argv else PREVIEW_DIR
     for key in SOURCES:
@@ -275,9 +299,11 @@ def main(argv):
         parts.extend(f"    {a!r}: {ids!r}," for a, ids in anims.items())
         parts.append("}")
         parts.append(f"BOSS_ANIM_FPS[{key!r}] = {dict(ANIM_FPS)!r}")
+        pw, ph = frames[anims["proj"][0]][:2]
+        parts.append(f"BOSS_PROJ[{key!r}] = ({pw}, {ph})")
         parts.append("")
-        hs = [m[2] for m in meta]
-        print(f"{key}: {len(meta)} frames, height {min(hs)}..{max(hs)}, "
+        hs = [m[2] for m in meta if not m[0].startswith(f"{key}_proj_")]
+        print(f"{key}: {len(meta)} frames, body height {min(hs)}..{max(hs)}, proj {pw}x{ph}, "
               + " ".join(f"{a}={len(i)}" for a, i in anims.items()))
     parts.append("del _META, _BLOB")
     parts.append("")

@@ -120,5 +120,24 @@
   "element_mult": {
     "strong": 1.5,
     "weak": 0.5
+  },
+  "equipment": {
+    "hat": {
+      "label": "안전모",
+      "shield": 1
+    },
+    "gloves": {
+      "label": "작업 장갑",
+      "rate": 0.2
+    },
+    "suit": {
+      "label": "사신 정장",
+      "magic": 1
+    },
+    "shoes": {
+      "label": "운동화",
+      "speed": 0.12,
+      "jump": 0.08
+    }
   }
 }

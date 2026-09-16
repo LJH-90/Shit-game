@@ -230,3 +230,31 @@ tick: overlay.poll(); world.update(dt); draw(world.snapshot()); root.after(1000/
   stages.json `"mid_bosses": [{"rank": "boss_mai", "title": "...", "from_stage": 2}, ...]`. waves ≥ 2 인 스테이지에서 `waves//2` 웨이브를 끝낸 뒤 자격 있는 중간 보스를 스테이지 번호로 번갈아 스폰(phase `"midboss"`), 처치하면 남은 웨이브 진행. 사망 시 중간 보스부터 재시작.
   brawler 패턴: 접근 → 사거리 안이면 `attack`(근접, 애니 중 접촉 피해) / 원거리 `attack2`(투사체 1발) / 가끔 플레이어 쪽 점프. 피격 시 `hurt` 잠깐.
   enemies 항목 `"mid": bool` 추가. hud `"boss_hp"` 는 중간 보스에도 표시.
+
+---
+
+추가(v1.7, additive): 밸런스 · 스테이지 보스 교체 · 투사체 스프라이트 · 장비 · 스탯 상점. 팀 A(에셋/sprites) · B(game/config/stages) · C(molgam). 바꾸지 말고 추가만.
+
+### 에셋 (A)
+- `적/뚱뚱보 보스.png` → key `"chang"` (쇠공 든 거구). `BOSS_FRAMES/BOSS_ANIMS/BOSS_ANIM_FPS["chang"]` 7키 동일 + 모든 보스에 8번째 anim `"proj"` (투사체 스프라이트, 1~4프레임, 오른쪽으로 날아가는 방향 기준):
+  mai = 날아가는 부채(시트의 빙글 도는 부채 셀), choi = 손톱 베기 바람 이펙트, chang = 쇠공(사슬 없이 공만). 앵커 = 중앙(ax=w//2, ay=h//2) — 투사체는 중심 기준으로 그린다.
+  `BOSS_PROJ = {key: (w, h)}` 노출(1x 픽셀 크기, 히트박스 참고용). 모든 프레임은 오른쪽 보기로 미러링(기존과 동일).
+- sprites.py: 변경 없음이 목표. `"proj"` 는 CHAR_ANIMS 로 자동 해석됨.
+
+### 게임 (B)
+- 체력: stages.json ranks 의 `hp` ×3, `boss_hp` ×5 (모든 rank). KOF 보스 base boss_hp: mai 30, choi 34, chang 38 (×5 전 값).
+- 스테이지 마지막 보스: stages.json `"final_bosses": ["boss_mai", "boss_choi", "boss_chang"]`. 부서 스테이지(waves>0)의 최종 보스 rank = `final_bosses[(stage_no-1) % len]`, 타이틀은 부서의 `boss_title` 유지. 임원 스테이지(executive)는 기존 유지.
+- 중간 보스: `"mid_bosses"` 를 기존 팔레트 보스로 교체: `[{"rank":"teamlead","title":"팀장 대행","from_stage":2},{"rank":"general","title":"감사 부장","from_stage":3},{"rank":"deputy","title":"기획 차장","from_stage":4}]` (pattern `"mid"` 기존 보스 AI, e.mid=True, boss_scale 4).
+- rank 항목 `"proj": {"speed": 1.2, "w": 40, "h": 20}` 가 있으면 brawler 의 attack2 투사체는 sprite 탄. Bullet 에 `sprite: str|None`(팔레트 key), `anim: str|None`, `frame: int`, `anim_t` 추가. `_update_bullets` 가 anim 을 진행(BOSS_ANIM_FPS 를 모르므로 8fps 고정). rank `boss_chang`: hit_w 64, hit_h 100, proj w 34 h 34 speed 1.0; boss_mai proj 40×22 speed 1.3; boss_choi proj 48×24 speed 1.5.
+- snapshot bullets 항목 추가 키: `"sprite": str|None, "anim": str|None, "frame": int, "flip": bool` (flip = vx<0).
+- 아이템: 유도탄 ttl 없음·속도 2배(MISSILE_SPEED 860, 회전 MISSILE_TURN 유지), 3연발 각도 ±5°(0.087 rad), 레이저 dmg 절반(`max(1, (dmg+1)//2)`).
+- 장비: config `"equipment": {"hat": {"label":"안전모","shield":1}, "gloves": {"label":"작업 장갑","rate":0.2}, "suit": {"label":"사신 정장","magic":1}, "shoes": {"label":"운동화","speed":0.12,"jump":0.08}}`, 레벨 무제한.
+  스테이지 최종 보스(mid 아님, 부서 스테이지)를 잡으면 레벨이 가장 낮은 슬롯(동률이면 hat→gloves→suit→shoes 순) +1, 배너 `"장비 획득 · <label> Lv<n>"` 2초, 텍스트 이펙트. `self.equip = {slot: level}`; `save_data()["equip"]`, 이어하기 시 복원(upgrades 와 같은 방식). 효과는 스탯/실드/연사에 합산.
+- 스탯 상점: DEFAULT_SHOP 에서 `"damage"` 제거, `"str"`(힘 +1, 1500, 1.25, max 0=무제한), `"agi"`(민첩 +1, 1500, 1.25, 무제한), `"int"`(지혜 +1, 1500, 1.25, 무제한) 추가. SHOP_ORDER = ("str","agi","int","rate","shield","life","next"). max 0 = 무제한(_shop_view 의 max 는 0 으로 내려보냄). 유효 스탯 = config stats + upgrades[str/agi/int].
+  스탯 정의 변경: 힘 → 물리 피해 `max(1, str//3)`; 민첩 → 이동/점프(기존 식); 지혜 → **총알 속도** `BULLET_SPEED × (1 + 0.08×(int-5))` (레이저 제외) **그리고** 마법 피해 `int//3` (속성 피해 유지, + 장비 suit magic).
+- hud 추가: `"equip": {slot: level}`, `"equip_labels": {slot: label}`, `"stats"` 는 유효 스탯(상점 포함), `"shop"["stats"]: {"str","agi","int"}` (상점 화면 표시용).
+
+### 렌더 (C)
+- bullets 에 `sprite` 가 있으면 사각형 대신 `bank.get(anim, frame, sprite, flip, 1)` 이미지(중심 앵커: x - w/2, y - h/2). 이미지 아이템 풀 별도 유지. 없으면 기존 사각형.
+- HUD: 장비 한 줄 `"장비: 안전모 Lv1 · 운동화 Lv2"` (레벨 0 제외, 없으면 표시 안 함). 상점 화면: 상단에 `힘 N · 민첩 N · 지혜 N` 현재 유효 스탯 표시, 항목 라벨 그대로, max 0 이면 "Lv n" 만 표시(max 없음).
+- 선택 화면 스탯 설명 한 줄: `"힘=공격력 · 민첩=이동/점프 · 지혜=탄속/마법"`.
