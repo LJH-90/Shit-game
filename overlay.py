@@ -83,7 +83,20 @@ _KEYMAP = {
     "kp_enter": ["confirm"],
     "p": ["pause"],
     "escape": ["quit"],
+    "tab": ["tab"],          # v1.9: 마을 화면 탭 전환
+    "1": ["slot1"], "2": ["slot2"], "3": ["slot3"], "4": ["slot4"], "5": ["slot5"],   # 인벤토리 사용
+    "kp_1": ["slot1"], "kp_2": ["slot2"], "kp_3": ["slot3"], "kp_4": ["slot4"], "kp_5": ["slot5"],
 }
+
+
+def _logical_keys(ks: str) -> tuple:
+    """keysym → 논리 키 목록. _KEYMAP 에 없는 한 글자 알파벳은 타자용 'char:<letter>' 로 보낸다."""
+    hit = _KEYMAP.get(ks)
+    if hit is not None:
+        return tuple(hit)
+    if len(ks) == 1 and "a" <= ks <= "z":
+        return ("char:" + ks,)
+    return ()
 
 _MOD_NAMES = {
     "shift": MOD_SHIFT,
@@ -406,7 +419,7 @@ class Overlay:
         if ks in self._pressed:
             return  # 자동 반복
         self._pressed.add(ks)
-        for logical in _KEYMAP.get(ks, ()):
+        for logical in _logical_keys(ks):
             if self._on_down:
                 self._on_down(logical)
             if logical == "quit":
@@ -415,7 +428,7 @@ class Overlay:
     def _key_release(self, e) -> None:
         ks = (e.keysym or "").lower()
         self._pressed.discard(ks)
-        for logical in _KEYMAP.get(ks, ()):
+        for logical in _logical_keys(ks):
             if self._on_up:
                 self._on_up(logical)
 

@@ -13,6 +13,19 @@
         "agi": 8,
         "str": 4,
         "int": 4
+      },
+      "melee": {
+        "style": "knife",
+        "range": 42,
+        "damage": 2,
+        "knockback": 140,
+        "cooldown": 0.45,
+        "hit_gap": 0.15,
+        "hits": 3,
+        "both_sides": false,
+        "only": false,
+        "pierce": false,
+        "text": "슉!"
       }
     },
     "hyunki": {
@@ -25,13 +38,17 @@
       "pierce": false,
       "shield": 3,
       "melee": {
-        "range": 45,
-        "damage": 4,
-        "knockback": 260,
-        "cooldown": 0.35,
+        "style": "hammer",
+        "range": 52,
+        "damage": 5,
+        "knockback": 420,
+        "cooldown": 0.6,
+        "hits": 1,
         "both_sides": false,
         "only": false,
-        "text": "퍽!"
+        "pierce": false,
+        "wave": true,
+        "text": "쾅!"
       },
       "stats": {
         "agi": 4,
@@ -60,6 +77,19 @@
         "agi": 5,
         "str": 3,
         "int": 8
+      },
+      "melee": {
+        "style": "whip",
+        "range": 95,
+        "damage": 2,
+        "knockback": 180,
+        "cooldown": 0.5,
+        "hits": 1,
+        "both_sides": false,
+        "only": false,
+        "pierce": true,
+        "magic": true,
+        "text": "휙!"
       }
     },
     "masked": {
@@ -79,7 +109,9 @@
         "cooldown": 0.4,
         "both_sides": true,
         "only": true,
-        "text": "흔들!"
+        "text": "흔들!",
+        "style": "hip",
+        "hits": 1
       },
       "stats": {
         "agi": 7,
@@ -139,5 +171,6 @@
       "speed": 0.12,
       "jump": 0.08
     }
-  }
+  },
+  "_comment_v19": "v1.9: melee.style knife|hammer|whip|hip (자동 전환: 사거리 안에 적이 있으면 사격 대신 근접). difficulty/money 수치는 game.py DEFAULT_* 와 economy.py configure() 참조."
 }

@@ -258,3 +258,122 @@ tick: overlay.poll(); world.update(dt); draw(world.snapshot()); root.after(1000/
 - bullets 에 `sprite` 가 있으면 사각형 대신 `bank.get(anim, frame, sprite, flip, 1)` 이미지(중심 앵커: x - w/2, y - h/2). 이미지 아이템 풀 별도 유지. 없으면 기존 사각형.
 - HUD: 장비 한 줄 `"장비: 안전모 Lv1 · 운동화 Lv2"` (레벨 0 제외, 없으면 표시 안 함). 상점 화면: 상단에 `힘 N · 민첩 N · 지혜 N` 현재 유효 스탯 표시, 항목 라벨 그대로, max 0 이면 "Lv n" 만 표시(max 없음).
 - 선택 화면 스탯 설명 한 줄: `"힘=공격력 · 민첩=이동/점프 · 지혜=탄속/마법"`.
+
+추가(v1.8, additive): 템포 · 적 움직임 다양화 · 등장 경고 · 연출. 시그니처 변경 없음.
+
+### 게임 (B)
+- 적 이동 속도 = rank speed × 난이도 speed × `_enemy_speed_mult()` = `ENEMY_SPEED_BASE(2.0) × min(ENEMY_SPEED_STAGE_CAP(3.0), 1.1^(stage_no-1))`. 보스 포함.
+- 대기 시간 절반: `DEFAULT_WAVE.spawn_stagger` 0.3, `WAVE_GAP` 0.5, `BOSS_GAP` 0.5, `BOSS_NEXT_GAP` 0.6, `CLEAR_TO_SHOP` 1.0. 스테이지 시작 무적 1.5초.
+- `pending` 항목은 `(rank, side, spawn_kind)` 3-튜플. spawn_kind ∈ {"side","ground","sky"}; 웨이브 첫 슬롯은 항상 side, 이후 슬롯은 `SPECIAL_SPAWN_BASE + SPECIAL_SPAWN_PER_STAGE×(stage-1)` (최대 0.55) 확률로 ground/sky.
+- `World.warnings: [{"kind","x","t","ttl","rank"}]` — ground/sky 스폰은 먼저 경고(`WARN_T` 0.9/1.0초)를 만들고, 만료 시 `_update_warnings` 가 적을 생성. ground: `y = ground_y + h + 4`, 위로 `sqrt(2g(h+4+POP_EXTRA))` 로 솟음(바닥 아래는 밴드 하단이 잘라줌). sky: `y = SKY_Y(-60)`, `drop=True` 로 낙하. 착지 시 `land_t = LAND_STUN(0.3)` 정지 + "dust" 이펙트. 낙하 중 몸(vy>0) / 솟는 중 몸(vy<0)이 플레이어와 겹치면 `_hit_player()`.
+- `Enemy` 슬롯 추가: `move_mode`("walk"|"sprint"|"pause"), `move_t`, `land_t`, `drop`, `spawn_kind`. `_Ent.anim_rate`(질주 시 SPRINT_MULT). 잡병·정예 접근은 `_approach()` 가 `MOVE_WEIGHTS`(walk 55 / sprint 25 / pause 20)로 모드를 갈아탐. 밴드 밖·연속 pause 금지.
+- 웨이브 종료 조건에 `not self.warnings` 포함. 스테이지 시작·사망·클리어 때 warnings 비움.
+- snapshot 추가: 최상위 `"warnings": [{"kind","x","t","ttl"}]`; enemies 항목 `"sprint": bool`, `"drop": bool`; effects kind `"dust"`(ttl 0.35).
+
+### 렌더 (C)
+- 플레이어 속성 오라: 발밑 타원·링 제거 → 불꽃 폴리곤 3층(smooth) + 불씨 6개. 색 = `hud.element_colors[element]`.
+- 적 속성 링 → 발밑 작은 불꽃 폴리곤 1개(키 "ring" 유지).
+- `warnings` 표시: ground = 바닥 점선 브래킷 + `!` + 금, sky = 상단 `▼` + 착지 그림자 + 세로 가이드선. `u = 1 - t/ttl` 로 색(노랑→빨강)·점멸 가속.
+- effects "dust" = 회색 타원 3개 확산. enemies `sprint` = 뒤쪽 속도선 3개, `drop` = 바닥 착지 그림자.
+- 서류 스톰 영역: 점선 사각형 → 회오리 깔때기 폴리곤 + 바람 링 + 궤도를 도는 종이 폴리곤(`PAPERS_PER_ZONE` 14), 마지막 0.4초 축소.
+
+추가(v1.9, additive): 아이템 10종 + 인벤토리 · 캐릭터별 근접 · 적 근접 · 새 적 5시트 · 돈/장비/창고/마을/도박 · 난이도 6종 · 낙하 타자 단어. 팀 A(에셋) · B(economy.py) · C(molgam 렌더) · 로직(game.py). 시그니처 변경 금지, 추가만. 모든 수치는 `config.json` 으로 덮어쓸 수 있게 DEFAULT_* 상수로.
+
+### 에셋 (A) — `tools/import_enemy_sheets.py` → `assets_enemy.py` (손수정 금지)
+- 소스와 key. 파랑(#1a3a8a 계열) 또는 마젠타(#ff00ff) 배경 시트. 셀은 배경이 아닌 픽셀의 연결 성분 bbox(행 밴드 → 열 런). 모든 프레임 오른쪽 보기로 통일(원본이 왼쪽 보기면 미러). 1px 어두운 윤곽선(import_boss_sheets.py 규칙). 앵커 = bbox 하단 중앙, `proj*` 는 중앙.
+  - `적/적 (1).png` → `"dino"`(파랑 갑주 공룡). 같은 시트의 빨강/금 색 변형 행은 각각 `"dino_red"`, `"dino_gold"` 의 **idle/run/attack 프레임**으로 쓰고 나머지 anim 은 dino 프레임을 팔레트 재색(hue shift)해서 채운다. `proj` = 화염탄(불꽃 구), `proj2` = 화염 브레스 길쭉한 불줄기.
+  - `적/적 (3).png` → `"golem"`(금색 바위 골렘), 변형 `"golem_blue"`, `"golem_green"`. `proj` = 바위(구형 돌), `proj2` = 초록 독 구.
+  - `적/적 (4).png` → `"slime"`(초록 슬라임 괴수), 변형 `"slime_red"`, `"slime_blue"`. `proj` = 점액 방울(작은 타원 모션 3프레임, 없으면 몸 뭉침 프레임 축소).
+  - `적/적 (2).png` → `"mario"`(작은 마리오 행), `"luigi"`(작은 루이지 행), `"mario_fire"`(파이어 마리오 슈퍼 크기). 시트 배경은 파랑(#5c94fc 계열) — 배경색은 (0,0) 픽셀로 잡는다. `proj` = 파이어볼(없으면 4프레임 회전 주황 원 합성).
+  - `적/적 (1).gif` → `"bomber_w"`(흰 봄버맨), `"bomber_b"`(검은 봄버맨). 마젠타 배경. `proj` = 폭탄(검은 구 + 도화선, 있으면 시트에서, 없으면 16×16 합성 3프레임 깜빡임).
+- 출력: `ENEMY_FRAMES[key][frame_id] = (w, h, ax, ay, rgba)` (1x), `ENEMY_ANIMS[key] = {"idle","run","attack","attack2","hurt","death","jump","proj"(,"proj2")}` — 시트에 없는 anim 은 가장 가까운 것으로 채워 **키는 반드시 존재**(attack2 없으면 attack, jump 없으면 run 1프레임 등). `ENEMY_ANIM_FPS[key]`, `ENEMY_PROJ[key] = {"proj": (w,h), "proj2": (w,h)}`, `ENEMY_HIT[key] = (hit_w, hit_h)` (idle 프레임 bbox 기준, 1x). frame_id = `<key>_<anim>_<n>`.
+- `sprites.py`: `CHAR_FRAMES/CHAR_ANIMS/CHAR_ANIM_FPS` 에 `assets_enemy` 병합(`import` 실패 시 빈 dict 로 폴백). `__all__` 에 `ENEMY_PROJ`, `ENEMY_HIT` 추가.
+- `--contact` 로 라벨 붙은 컨택트 시트를 `tools/contact/<key>.png` 에 저장(셀 (row,col) 인덱스 표기). 프레임 표 `CELLS` 는 컨택트 시트를 **직접 보고** 고른다. 각 anim 미리보기 스트립도 `tools/contact/<key>_<anim>.png`.
+- 크기 참고: 게임은 잡병 scale 2, 이 몬스터들은 1x 원본이 이미 크므로 stages.json rank 에 `"scale": 1` 로 두고 마리오/봄버맨(작음)은 `"scale": 2`.
+
+### 경제 (B) — 새 모듈 `economy.py` (순수 로직, random.Random 주입, tkinter 금지, `python economy.py --selftest`)
+```python
+SLOTS = ("hat","gloves","suit","shoes","weapon","acc")   # 안전모·작업 장갑·사신 정장·운동화·사무용 무기·사원증
+SLOT_LABEL = {"hat":"안전모","gloves":"작업 장갑","suit":"사신 정장","shoes":"운동화","weapon":"사무용 무기","acc":"사원증"}
+RARITY = ("normal","rare","unique"); RARITY_LABEL = {"normal":"일반","rare":"레어","unique":"유니크"}
+RARITY_MULT = {"normal":1.0,"rare":1.8,"unique":3.0}      # 고유 효과·스탯 배수 (유니크 = 일반의 3배 = 200% 차이)
+MAX_LEVEL = 20
+SHOP_RARITY = {"normal":0.90,"rare":0.08,"unique":0.02}   # 상점 목록
+BOSS_RARITY = {"normal":0.85,"rare":0.12,"unique":0.03}   # 보스 드롭 / 타자 단어 보상은 {"normal":0.4,"rare":0.4,"unique":0.2}
+BOX_RARITY  = {"normal":0.70,"rare":0.22,"unique":0.08}   # 랜덤박스
+ROLL_RANGE = (0.7, 1.3)                                    # 스탯 ±30%
+# 슬롯 고유 효과: 레벨당 증가량(일반 기준). 실제 = base_per_level * level * RARITY_MULT[rarity] (+ level 0 도 base_flat)
+SLOT_EFFECT = {"hat": ("shield", 0.25, 1.0),      # (effect key, per level, flat)  → 실드 = round(flat + per*lv*mult)
+               "gloves": ("rate", 0.02, 0.0),     # 연사 +2%/lv
+               "suit": ("magic", 0.25, 0.0),      # 마법 피해 +0.25/lv (반올림)
+               "shoes": ("speed", 0.01, 0.0),     # 이동 +1%/lv (점프 = speed*0.6)
+               "weapon": ("damage", 0.2, 0.0),    # 물리 피해 +0.2/lv (반올림)
+               "acc": ("money", 0.02, 0.0)}       # 돈 드롭 +2%/lv
+def make_equipment(rng, slot, rarity, level=0, stage=1) -> dict
+#   {"id": str(uuid-ish/rng hex), "slot", "rarity", "level", "name": "<접두어> <슬롯라벨>", "roll": 0.7~1.3,
+#    "stats": {"str": int, "agi": int, "int": int}}  — stats 기본 합 = 2 + stage//5, 셋 중 랜덤 분배, × roll × RARITY_MULT, 반올림
+def equip_effect(eq) -> dict   # {"shield":int,"rate":float,"magic":int,"speed":float,"jump":float,"damage":int,"money":float,"str":int,"agi":int,"int":int}
+def total_effect(equipped: dict[str, dict|None]) -> dict   # 슬롯 합산, 키 전부 존재
+def upgrade_cost(eq) -> int          # 300 * 1.12**level * RARITY_COST[rarity](1/1.5/2.5), 레벨 20 이면 0(불가)
+def buy_price(eq, stage) -> int      # (600 * RARITY_PRICE(1/4/15) + 120*level) * (1 + 0.06*(stage-1))
+def sell_price(eq, stage) -> int     # buy_price * 0.4
+def roll_rarity(rng, table) -> str
+def make_shop_stock(rng, stage, n=10) -> list[dict]   # SHOP_RARITY, 슬롯 랜덤, level 0~min(5, stage//3)
+BOX_PRICE = lambda stage: int(900 * (1 + 0.06*(stage-1)))
+def open_box(rng, stage) -> dict     # {"kind": "equip"|"item"|"money"|"dud", "equip": dict|None, "item": str|None, "money": int}
+#   60% equip(BOX_RARITY) / 25% item(ITEM_KINDS 중 랜덤, 1UP 제외 가중) / 10% money(BOX_PRICE*0.5~3.0) / 5% dud("꽝 · 사탕 하나")
+def gamble_upgrade(rng, eq, money) -> tuple[dict, int, str]   # cost = upgrade_cost*1.5; 60% +2lv(최대 20) / 30% 변화 없음 / 10% -3lv(유니크는 -0 대신 변화 없음). 반환 (eq, 잔액, 결과 문구). 돈 부족이면 문구만
+def gamble_double(rng, stake, streak) -> tuple[bool, int]      # 50% 성공 → 배당 stake*2, 연속 성공 시 x2 누적(최대 x8) ; 실패 → 0
+SLOT_SYMBOLS = ("₩","★","◆","♥","7")
+def gamble_slots(rng, bet, stage) -> dict   # {"reels": [s,s,s], "payout": int, "prize": None|{"kind":"item"|"equip", ...}, "text": str}
+#   확률: 3개 동일 7 = 잭팟 bet*30 + 유니크 장비 / 3개 동일 ★ = 레어 장비 / 3개 동일 ₩ = bet*10 / 3개 동일 ◆·♥ = bet*5 / 2개 동일 = bet 반환 / 그 외 0. 기댓값 ≈ 0.85*bet
+class Warehouse:  # 창고 24칸 + 장착 6슬롯
+    CAP = 24
+    def __init__(self, data: dict|None): ...   # data = save_data 형식
+    items: list[dict]; equipped: dict[str, dict|None]
+    def add(self, eq) -> bool                   # 꽉 차면 False
+    def equip(self, idx) -> dict|None           # 창고 idx 를 장착, 기존 장착품은 창고로 (자리 없으면 실패 None)
+    def unequip(self, slot) -> bool
+    def remove(self, idx) -> dict
+    def effect(self) -> dict                    # total_effect(equipped)
+    def to_save(self) -> dict                   # {"items": [...], "equipped": {slot: eq|None}}
+def money_drop(rng, kind: str, stage: int, diff_mult: float, acc_bonus: float) -> int
+#   kind grunt 20~40 / elite 60~100 / mid 300 / boss 800 / word 500 ; × (1 + 0.08*(stage-1)) × diff_mult × (1+acc_bonus)
+```
+- 밸런스 목표: 보통 난이도 50스테이지 누적 드롭 ≈ 20만 ₩, 6슬롯 20레벨 전부 강화 ≈ 13만 ₩. selftest 에서 기대값 시뮬로 검증(오차 ±25%).
+- 난이도 표(게임이 참조): `DIFFICULTY = {"easy":0.7,"normal":1.0,"hard_":1.3,...}` 는 game.py 가 가진다(B 는 diff_mult 만 받음).
+
+### 로직 (game.py) — 스냅샷/키 계약 (C 가 그린다)
+- 논리 키 추가(overlay `_KEYMAP`): `"1".."5"` → `"slot1".."slot5"`; 알파벳 a~y 중 게임 키가 아닌 것 → `"char:<letter>"` (타자용). overlay 는 keysym 이 한 글자 소문자 알파벳이고 `_KEYMAP` 에 없으면 `char:<letter>` 를 보낸다. 마을 화면용 `"tab"` → `"tab"`.
+- `World.STATES` 에 `"town"` 추가(5의 배수 스테이지 클리어 → 상점 대신 마을; 마을 안에 스탯 탭 포함).
+- 난이도: `DIFFICULTIES = ["easy","normal","hard","harder","hell","crazy"]`, 라벨 쉬움/보통/어려움/하드/헬/크레이지, 배수 `{"easy":0.7,"normal":1.0,"hard":1.3,"harder":1.6,"hell":2.2,"crazy":3.0}` → 적 HP·투사체 속도·돈 배수 그대로, 이동 속도는 `1 + (m-1)/2`. 선택 화면에서 `skill`(C) 키로 순환. 잠김: hell = 어느 난이도로든 20스테이지 클리어, crazy = hell 로 30스테이지 클리어. save: `"best_clear": {diff: int}`, `"difficulty": str`. 무한 모드 로테이션 폐지(라벨은 선택 난이도).
+- snapshot 추가 키:
+  - `hud["money"]: int`, `hud["difficulty_label"]: str`, `hud["difficulty_locked"]: [bool×6]`, `hud["difficulty_index"]: int`
+  - `hud["inventory"]: [{"kind": str, "count": int} | None] ×5`, `hud["inv_flash"]: int|None` (방금 쓴/얻은 슬롯 0~4, 0.4초)
+  - `hud["melee_style"]: "knife"|"hammer"|"whip"|"hip"`, `hud["melee_hit"]: int` (콤보 타수 1~3)
+  - `hud["slow_t"]: float` (야근 커피 남은 초, 0 이면 없음), `hud["equip_effect"]: dict` (economy.total_effect), `hud["equipped"]: {slot: eq|None}`
+  - `hud["town"]: None | {"tab": "stat"|"shop"|"store"|"gamble", "tabs": [라벨×4], "index": int, "msg": str, "stage": int,
+        "stat": {"items": [...기존 shop items...]}, "shop": {"stock": [eq|{"kind":"box","price":int}...10+1], "afford": [bool]},
+        "store": {"items": [eq...], "equipped": {slot: eq|None}, "mode": "list"|"equipped"}, 
+        "gamble": {"games": ["강화 도박","더블업","슬롯"], "game": int, "stake": int, "streak": int, "reels": [str×3]|None, "target": int|None}}`
+    마을 조작: `tab`(Tab) 또는 `up/down` = 탭 전환, `left/right` = 항목, `confirm` = 실행(구매/장착/강화/도박), `skill`(C) = 보조(창고: 판매 / 상점: 박스 열기 대신 없음 / 더블업: 스테이크 변경), `down` 은 창고에서 장착↔목록 모드 전환, 마지막 항목 "다음 스테이지".
+  - 최상위 `"allies": [{"kind": "decoy"|"drone"|"dog", "x","y","anim","frame","flip","palette","t","ttl"}]` — decoy 는 플레이어 팔레트로 그림(회색 반투명 느낌은 렌더가 dim 처리), drone/dog 는 렌더러 내장 픽셀아트.
+  - 최상위 `"words": [{"text": str, "typed": int, "x": float, "y": float, "kind": "wipe"|"gear"|"money"|"life", "t": float, "vy": float}]` — 스테이지마다 정확히 2번(웨이브 중 랜덤 시점), 위(-20)에서 `vy` ≈ 34px/s 로 낙하, 바닥 도달 시 소멸. 글자 = 소문자 영문(z,x,c,p,u,r 제외; 3~7자), kind 별 단어 사전. 완성 시: wipe = 화면 적 전멸(보스 HP 20%), gear = 장비 드롭(창고, RARITY 0.4/0.4/0.2), money = 돈, life = 목숨+1. 이펙트 `"word"` kind.
+  - bullets 항목 추가: `"gravity": bool`(포물선 투사체: 폭탄·바위), `"r": float`(반지름, 폭발 원용), kind 추가 `"bomb"`(플레이어 결재 폭탄 낙하물), `"blast"`(폭발 원, 짧은 ttl, r 커짐), `"wave"`(현기 해머 지면 충격파, 바닥을 따라 진행).
+  - effects kind 추가: `"slash"`(근접 궤적: text 에 style), `"word"`, `"coin"`(돈 획득 +N 텍스트, 금색), `"boxopen"`.
+  - enemies 항목 추가: `"attack": bool`(근접 공격 중), `"slow": bool`.
+  - items 항목 `kind` 확장: `"laser","homing","spread","rapid","life","bomb","coffee","decoy","drone","dog","coin"` (coin = 바닥에 떨어진 돈, `"value": int` 추가).
+- 인벤토리: 5칸, 같은 kind 는 겹침(최대 3). 주우면 즉시 적용하지 않고 슬롯에 저장, coin 은 즉시 돈. 꽉 차고 겹칠 수 없으면 못 주움(아이템은 바닥에 남음). `slotN` 으로 사용: 무기류 = 지속시간 시작, life = 목숨+1, bomb = 화면 전체 폭발(잡병 즉사·보스 15%·적 탄 제거), coffee = 6초 슬로우(적·적탄 40% 속도), decoy = 분신 8초(자리에 서서 자동 사격, 적 조준 50% 분신), drone = 15초 머리 위 드론 초당 3발 유도, dog = 찹츄 10초(바닥 달려가 근접, 물기 데미지 2, 넉백).
+- 근접(자동 전환): fire 시 사거리 안에 적이 있으면 근접. config 캐릭터 `melee` 확장 `{"style","range","damage","knockback","cooldown","hits"(콤보 수),"pierce"(범위 내 전부),"wave"(true 면 지면 충격파 탄)}`. 재휘 knife(3연타 0.15s 간격, 3타째 넉백 300), 현기 hammer(느림 0.6s, 넉백 420, wave), 동일 whip(사거리 95, pierce, 마법 피해 = int//3), 복면 hip(기존).
+- 적 근접: 모든 잡병·정예에 `reach = w*0.6+22`. 사거리 안이면 `attack_t` 0.45s, 창 (0.15~0.3) 에 겹치면 `_hit_player()`. 팔레트 적은 anim "shoot" 로 대체, 새 몬스터는 "attack". 근접 쿨 1.0~1.6s. 근접 적은 stop_dist 를 reach 로.
+- 새 적 rank(stages.json ranks 추가, 팀 A 의 key): dino(정예, hp 9, speed 90, proj 화염탄, 근접 물기), dino_red(정예, 더 빠름), dino_gold(중간보스 후보), golem(정예 탱커 hp 15, speed 45, proj 바위 포물선 gravity), golem_blue, golem_green(proj2 독), slime(잡병 hp 4, speed 110, 돌진 근접), slime_red/blue, mario(잡병 hp 3, 점프 잦음), luigi(잡병, 더 높이 점프), mario_fire(정예, 파이어볼), bomber_w/bomber_b(잡병, 폭탄 포물선 투척, 착지 후 0.8s 뒤 폭발 r 40). 부서 스테이지 grunts/elites 목록에 5스테이지부터 섞어 넣기(회사 부서 테마는 유지, `"monsters": [...]` 키로 부서마다 1~2종).
+- 보스: 점프 vs 대시 확률 1:5(둘 다 가능할 때 대시 5/6). MAX_BULLETS 400(플레이어 사격은 제한 없음, 적 사격만 캡). MISSILE_TURN 14, MISSILE_SPEED 700. SPREAD_ANGLE 0.0436(±2.5°).
+- 저장(`save_data`): `"money"`, `"warehouse"`(economy.Warehouse.to_save), `"difficulty"`, `"best_clear"`, `"inventory"`. 게임 오버에도 유지.
+
+#### v1.9 구현 메모 (계약과 다른 점)
+- economy: `MONEY_STAGE_GROWTH` 0.08 → 0.05 (50스테이지 누적 ≈ 21.8만 ₩). `BOX_PRICE(stage)` 는 함수. `open_box` 결과에 `"text"` 추가. `WORD_RARITY` 상수 노출. `Warehouse.equip(idx)` 는 기존 장착품을 같은 자리(idx)에 되돌려 놓아 용량 실패가 없다.
+- hud["town"] 추가 키: `"tab_index"`, `"count"`, `"hint"`(탭별 조작 안내 문자열), `"money"`, `shop["prices"]`, `store["cap"|"sell"|"upgrade_cost"]`, `gamble["stake_pct"|"bet"|"target_eq"|"target_cost"]`. 마을 조작: `Tab` 탭, `↑↓` = 창고 줄 전환 / 도박 항목 이동 / 그 외 탭 전환, `←→` 항목, `Enter` 실행, `C` 보조(창고 판매 · 도박 대상/배팅 변경).
+- 인벤토리 사용 키는 `slot1..slot5`(숫자 1~5, 키패드 포함). 타자는 `char:<letter>` — `z x c p u` 는 게임 키이므로 단어에 안 쓴다(`WORD_LETTERS`).
+- 새 rank 키(stages.json): `sheet: true`(자체 시트 → 근접 anim "attack"), `melee: true`, `hit_scaled: true`(hit_w/h × scale), `proj {anim, w, h, speed, aim, gravity, fuse, blast}`, `jump_odds`, `jump_mult`. 부서 `monsters`, 최상위 `monsters_from_stage`(기본 5).
+- 밸런스 로그: `World.drain_log()` → 스테이지 종료(클리어/게임 오버)마다 1 dict. molgam 이 `balance_log.jsonl`(세이브 파일 옆)에 한 줄씩 append.
+- 무기 상점 재고는 마을 방문(스테이지)마다 새로 뽑고, 그 마을 안에서는 유지된다(`shop_stock_stage`).

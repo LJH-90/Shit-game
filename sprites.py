@@ -16,6 +16,10 @@ run, attack, attack2, hurt, death, jump, proj).  Shared anim names a boss lacks 
 back through ``ANIM_ALIAS`` (shoot -> attack, fall -> jump, ...), else ``idle``.
 ``proj`` is the boss's projectile sprite (centre-anchored, flying right); ``BOSS_PROJ``
 gives its 1x (w, h) per key.
+
+Monsters (``assets_enemy``, keys ``dino`` / ``golem`` / ``slime`` / ``mario`` / ``bomber_w`` and
+their colour variants) are merged the same way; ``ENEMY_PROJ[key]`` = {"proj": (w, h)(, "proj2")}
+and ``ENEMY_HIT[key]`` = 1x (w, h) of the idle frame (both empty dicts when the module is missing).
 """
 from __future__ import annotations
 
@@ -29,11 +33,23 @@ import assets_data
 import assets_extra
 from assets_boss import BOSS_PROJ
 
+try:  # monsters cut from the 적/ sheets (tools/import_enemy_sheets.py); optional
+    import assets_enemy
+    ENEMY_PROJ = assets_enemy.ENEMY_PROJ
+    ENEMY_HIT = assets_enemy.ENEMY_HIT
+    _ENEMY_FRAMES, _ENEMY_ANIMS, _ENEMY_FPS = (assets_enemy.ENEMY_FRAMES, assets_enemy.ENEMY_ANIMS,
+                                               assets_enemy.ENEMY_ANIM_FPS)
+except ImportError:  # pragma: no cover - generated module missing
+    ENEMY_PROJ, ENEMY_HIT = {}, {}
+    _ENEMY_FRAMES, _ENEMY_ANIMS, _ENEMY_FPS = {}, {}, {}
+
 CLASSES = assets_data.CLASSES
-CHAR_FRAMES = {**assets_chars.CHAR_FRAMES, **assets_boss.BOSS_FRAMES}
-# palettes with a private animation table (mid bosses): palette -> {anim: [frame_id, ...]}
+CHAR_FRAMES = {**assets_chars.CHAR_FRAMES, **assets_boss.BOSS_FRAMES, **_ENEMY_FRAMES}
+# palettes with a private animation table (mid bosses, monsters): palette -> {anim: [frame_id, ...]}
 CHAR_ANIMS: dict[str, dict[str, list[str]]] = {k: dict(v) for k, v in assets_boss.BOSS_ANIMS.items()}
+CHAR_ANIMS.update({k: dict(v) for k, v in _ENEMY_ANIMS.items()})
 CHAR_ANIM_FPS: dict[str, dict[str, float]] = {k: dict(v) for k, v in assets_boss.BOSS_ANIM_FPS.items()}
+CHAR_ANIM_FPS.update({k: dict(v) for k, v in _ENEMY_FPS.items()})
 # shared anim name -> boss anim name when the palette's own table lacks it (anything else -> idle)
 ANIM_ALIAS = {"shoot": "attack", "shoot_run": "run", "fall": "jump", "crouch": "idle",
               "crouch_shoot": "attack", "victory": "idle"}
@@ -284,6 +300,6 @@ class SpriteBank:
 
 
 __all__ = ["PALETTES", "SpriteBank", "CLASSES", "CHAR_FRAMES", "CHAR_ANIMS", "CHAR_ANIM_FPS", "ANIM_ALIAS",
-           "BOSS_PROJ", "FRAMES", "ANIMS", "ANIM_FPS",
+           "BOSS_PROJ", "ENEMY_PROJ", "ENEMY_HIT", "FRAMES", "ANIMS", "ANIM_FPS",
            "shade_color", "palette_lut",
            "encode_png", "render_rgba_rows", "frame_data"]
