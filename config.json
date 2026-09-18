@@ -167,21 +167,26 @@
   "equipment": {
     "hat": {
       "label": "안전모",
-      "shield": 1
+      "shield": 1,
+      "max": 3
     },
     "gloves": {
       "label": "작업 장갑",
-      "rate": 0.2
+      "rate": 0.1,
+      "max": 3
     },
     "suit": {
       "label": "사신 정장",
-      "magic": 1
+      "magic": 1,
+      "max": 3
     },
     "shoes": {
       "label": "운동화",
-      "speed": 0.12,
-      "jump": 0.08
+      "speed": 0.06,
+      "jump": 0.04,
+      "max": 3
     }
   },
+  "_comment_v20": "v2.0: equipment(부서 보스 레거시 장비)는 슬롯당 max 3, 레벨당 효과 절반. 모든 슬롯이 max 면 보스가 300₩×스테이지를 대신 지급. economy 상수는 \"economy\": {상수명: 값} 으로 덮어쓴다(economy.configure).",
   "_comment_v19": "v1.9: melee.style knife|hammer|whip|hip (자동 전환: 사거리 안에 적이 있으면 사격 대신 근접). difficulty/money 수치는 game.py DEFAULT_* 와 economy.py configure() 참조."
 }

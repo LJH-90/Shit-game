@@ -246,7 +246,7 @@ tick: overlay.poll(); world.update(dt); draw(world.snapshot()); root.after(1000/
 - 스테이지 마지막 보스: stages.json `"final_bosses": ["boss_mai", "boss_choi", "boss_chang"]`. 부서 스테이지(waves>0)의 최종 보스 rank = `final_bosses[(stage_no-1) % len]`, 타이틀은 부서의 `boss_title` 유지. 임원 스테이지(executive)는 기존 유지.
 - 중간 보스: `"mid_bosses"` 를 기존 팔레트 보스로 교체: `[{"rank":"teamlead","title":"팀장 대행","from_stage":2},{"rank":"general","title":"감사 부장","from_stage":3},{"rank":"deputy","title":"기획 차장","from_stage":4}]` (pattern `"mid"` 기존 보스 AI, e.mid=True, boss_scale 4).
 - rank 항목 `"proj": {"speed": 1.2, "w": 40, "h": 20}` 가 있으면 brawler 의 attack2 투사체는 sprite 탄. Bullet 에 `sprite: str|None`(팔레트 key), `anim: str|None`, `frame: int`, `anim_t` 추가. `_update_bullets` 가 anim 을 진행(BOSS_ANIM_FPS 를 모르므로 8fps 고정). rank `boss_chang`: hit_w 64, hit_h 100, proj w 34 h 34 speed 1.0; boss_mai proj 40×22 speed 1.3; boss_choi proj 48×24 speed 1.5.
-- snapshot bullets 항목 추가 키: `"sprite": str|None, "anim": str|None, "frame": int, "flip": bool` (flip = vx<0).
+- snapshot bullets 항목 추가 키: `"sprite": str|None, "anim": str|None, "frame": int, "flip": bool` (flip = vx<0). v2.0: `"vx": float, "vy": float` (px/s, 소수 1자리 — 적탄 잔상 방향용; 히트박스 w/h 는 그대로).
 - 아이템: 유도탄 ttl 없음·속도 2배(MISSILE_SPEED 860, 회전 MISSILE_TURN 유지), 3연발 각도 ±5°(0.087 rad), 레이저 dmg 절반(`max(1, (dmg+1)//2)`).
 - 장비: config `"equipment": {"hat": {"label":"안전모","shield":1}, "gloves": {"label":"작업 장갑","rate":0.2}, "suit": {"label":"사신 정장","magic":1}, "shoes": {"label":"운동화","speed":0.12,"jump":0.08}}`, 레벨 무제한.
   스테이지 최종 보스(mid 아님, 부서 스테이지)를 잡으면 레벨이 가장 낮은 슬롯(동률이면 hat→gloves→suit→shoes 순) +1, 배너 `"장비 획득 · <label> Lv<n>"` 2초, 텍스트 이펙트. `self.equip = {slot: level}`; `save_data()["equip"]`, 이어하기 시 복원(upgrades 와 같은 방식). 효과는 스탯/실드/연사에 합산.
@@ -296,7 +296,7 @@ tick: overlay.poll(); world.update(dt); draw(world.snapshot()); root.after(1000/
 SLOTS = ("hat","gloves","suit","shoes","weapon","acc")   # 안전모·작업 장갑·사신 정장·운동화·사무용 무기·사원증
 SLOT_LABEL = {"hat":"안전모","gloves":"작업 장갑","suit":"사신 정장","shoes":"운동화","weapon":"사무용 무기","acc":"사원증"}
 RARITY = ("normal","rare","unique"); RARITY_LABEL = {"normal":"일반","rare":"레어","unique":"유니크"}
-RARITY_MULT = {"normal":1.0,"rare":1.8,"unique":3.0}      # 고유 효과·스탯 배수 (유니크 = 일반의 3배 = 200% 차이)
+RARITY_MULT = {"normal":1.0,"rare":1.8,"unique":3.0}      # 슬롯 고유 효과 배수 (스탯은 RARITY_STAT_MULT {1.0/1.5/2.0} — v2.0)
 MAX_LEVEL = 20
 SHOP_RARITY = {"normal":0.90,"rare":0.08,"unique":0.02}   # 상점 목록
 BOSS_RARITY = {"normal":0.85,"rare":0.12,"unique":0.03}   # 보스 드롭 / 타자 단어 보상은 {"normal":0.4,"rare":0.4,"unique":0.2}
@@ -311,10 +311,12 @@ SLOT_EFFECT = {"hat": ("shield", 0.25, 1.0),      # (effect key, per level, flat
                "acc": ("money", 0.02, 0.0)}       # 돈 드롭 +2%/lv
 def make_equipment(rng, slot, rarity, level=0, stage=1) -> dict
 #   {"id": str(uuid-ish/rng hex), "slot", "rarity", "level", "name": "<접두어> <슬롯라벨>", "roll": 0.7~1.3,
-#    "stats": {"str": int, "agi": int, "int": int}}  — stats 기본 합 = 2 + stage//5, 셋 중 랜덤 분배, × roll × RARITY_MULT, 반올림
+#    "stats": {"str": int, "agi": int, "int": int}, "perks": [str]}  — stats 기본 합 = 1 + stage//4, 셋 중 랜덤 분배, × roll × RARITY_STAT_MULT, 반올림; perks normal 0 / rare 1 / unique 2 (v2.0)
 def equip_effect(eq) -> dict   # {"shield":int,"rate":float,"magic":int,"speed":float,"jump":float,"damage":int,"money":float,"str":int,"agi":int,"int":int}
 def total_effect(equipped: dict[str, dict|None]) -> dict   # 슬롯 합산, 키 전부 존재
-def upgrade_cost(eq) -> int          # 300 * 1.12**level * RARITY_COST[rarity](1/1.5/2.5), 레벨 20 이면 0(불가)
+def upgrade_cost(eq) -> int          # 300 * 1.12**level * RARITY_COST[rarity](1/1.5/2.5), 레벨 20 이면 0(불가) — 도박 기준가
+def enhance_cost(eq, perks=None) -> int   # v2.0 확정 강화 비용: 300 * 1.12**level * ENHANCE_RARITY_COST(1.6/2.6/4.5), 'haggler' 퍼크 ×0.8(레어) / ×0.65(유니크), 레벨 20 이면 0
+def enhance(eq, money, perks=None) -> tuple[dict, int, str, bool]   # v2.0 확정 +1 (입력 eq 불변). 돈 부족 / MAX_LEVEL 이면 ok False, 문구만
 def buy_price(eq, stage) -> int      # (600 * RARITY_PRICE(1/4/15) + 120*level) * (1 + 0.06*(stage-1))
 def sell_price(eq, stage) -> int     # buy_price * 0.4
 def roll_rarity(rng, table) -> str
@@ -322,7 +324,7 @@ def make_shop_stock(rng, stage, n=10) -> list[dict]   # SHOP_RARITY, 슬롯 랜�
 BOX_PRICE = lambda stage: int(900 * (1 + 0.06*(stage-1)))
 def open_box(rng, stage) -> dict     # {"kind": "equip"|"item"|"money"|"dud", "equip": dict|None, "item": str|None, "money": int}
 #   60% equip(BOX_RARITY) / 25% item(ITEM_KINDS 중 랜덤, 1UP 제외 가중) / 10% money(BOX_PRICE*0.5~3.0) / 5% dud("꽝 · 사탕 하나")
-def gamble_upgrade(rng, eq, money) -> tuple[dict, int, str]   # cost = upgrade_cost*1.5; 60% +2lv(최대 20) / 30% 변화 없음 / 10% -3lv(유니크는 -0 대신 변화 없음). 반환 (eq, 잔액, 결과 문구). 돈 부족이면 문구만
+def gamble_upgrade(rng, eq, money) -> tuple[dict, int, str]   # cost = upgrade_cost*1.5; 60% +2lv(최대 20) / 30% 변화 없음 / 10% -3lv(유니크는 -1lv, GAMBLE_UPGRADE_DOWN_UNIQUE; Lv 0 이면 "변화 없음" 문구). 반환 (eq, 잔액, 결과 문구). 돈 부족이면 문구만
 def gamble_double(rng, stake, streak) -> tuple[bool, int]      # 50% 성공 → 배당 stake*2, 연속 성공 시 x2 누적(최대 x8) ; 실패 → 0
 SLOT_SYMBOLS = ("₩","★","◆","♥","7")
 def gamble_slots(rng, bet, stage) -> dict   # {"reels": [s,s,s], "payout": int, "prize": None|{"kind":"item"|"equip", ...}, "text": str}
@@ -336,9 +338,9 @@ class Warehouse:  # 창고 24칸 + 장착 6슬롯
     def unequip(self, slot) -> bool
     def remove(self, idx) -> dict
     def effect(self) -> dict                    # total_effect(equipped)
-    def to_save(self) -> dict                   # {"items": [...], "equipped": {slot: eq|None}}
+    def to_save(self) -> dict                   # {"items": [...], "equipped": {slot: eq|None}} — stats dict / perks list 는 복사(라이브 장비와 공유 없음)
 def money_drop(rng, kind: str, stage: int, diff_mult: float, acc_bonus: float) -> int
-#   kind grunt 20~40 / elite 60~100 / mid 300 / boss 800 / word 500 ; × (1 + 0.08*(stage-1)) × diff_mult × (1+acc_bonus)
+#   kind grunt 20~40 / elite 60~100 / mid 250 / boss 600 / word 400 ; × (1 + 0.05*(stage-1)) × diff_mult × (1+acc_bonus)   (v2.0 MONEY_KIND / MONEY_STAGE_GROWTH)
 ```
 - 밸런스 목표: 보통 난이도 50스테이지 누적 드롭 ≈ 20만 ₩, 6슬롯 20레벨 전부 강화 ≈ 13만 ₩. selftest 에서 기대값 시뮬로 검증(오차 ±25%).
 - 난이도 표(게임이 참조): `DIFFICULTY = {"easy":0.7,"normal":1.0,"hard_":1.3,...}` 는 game.py 가 가진다(B 는 diff_mult 만 받음).
@@ -371,9 +373,21 @@ def money_drop(rng, kind: str, stage: int, diff_mult: float, acc_bonus: float) -
 - 저장(`save_data`): `"money"`, `"warehouse"`(economy.Warehouse.to_save), `"difficulty"`, `"best_clear"`, `"inventory"`. 게임 오버에도 유지.
 
 #### v1.9 구현 메모 (계약과 다른 점)
-- economy: `MONEY_STAGE_GROWTH` 0.08 → 0.05 (50스테이지 누적 ≈ 21.8만 ₩). `BOX_PRICE(stage)` 는 함수. `open_box` 결과에 `"text"` 추가. `WORD_RARITY` 상수 노출. `Warehouse.equip(idx)` 는 기존 장착품을 같은 자리(idx)에 되돌려 놓아 용량 실패가 없다.
+- economy: `MONEY_STAGE_GROWTH` 0.08 → 0.05 (50스테이지 누적 ≈ 19만 ₩, v2.0 MONEY_KIND 기준). `BOX_PRICE(stage)` 는 함수. `open_box` 결과에 `"text"` 추가. `WORD_RARITY` 상수 노출. `Warehouse.equip(idx)` 는 기존 장착품을 같은 자리(idx)에 되돌려 놓아 용량 실패가 없다.
 - hud["town"] 추가 키: `"tab_index"`, `"count"`, `"hint"`(탭별 조작 안내 문자열), `"money"`, `shop["prices"]`, `store["cap"|"sell"|"upgrade_cost"]`, `gamble["stake_pct"|"bet"|"target_eq"|"target_cost"]`. 마을 조작: `Tab` 탭, `↑↓` = 창고 줄 전환 / 도박 항목 이동 / 그 외 탭 전환, `←→` 항목, `Enter` 실행, `C` 보조(창고 판매 · 도박 대상/배팅 변경).
 - 인벤토리 사용 키는 `slot1..slot5`(숫자 1~5, 키패드 포함). 타자는 `char:<letter>` — `z x c p u` 는 게임 키이므로 단어에 안 쓴다(`WORD_LETTERS`).
 - 새 rank 키(stages.json): `sheet: true`(자체 시트 → 근접 anim "attack"), `melee: true`, `hit_scaled: true`(hit_w/h × scale), `proj {anim, w, h, speed, aim, gravity, fuse, blast}`, `jump_odds`, `jump_mult`. 부서 `monsters`, 최상위 `monsters_from_stage`(기본 5).
 - 밸런스 로그: `World.drain_log()` → 스테이지 종료(클리어/게임 오버)마다 1 dict. molgam 이 `balance_log.jsonl`(세이브 파일 옆)에 한 줄씩 append.
 - 무기 상점 재고는 마을 방문(스테이지)마다 새로 뽑고, 그 마을 안에서는 유지된다(`shop_stock_stage`).
+
+#### v2.0 구현 메모 (밸런스·경제·시각 — 계약 변경분)
+- 난이도 곡선: `DIFF_CURVE` (game.py, stages.json `"curve"` 로 덮어씀) 는 easy / normal 에만 존재. hp/speed/count/proj/money 를 직접 지정하고 1~3스테이지에 `warmup`(hp·speed) / `count_warmup`(count) 을 곱한다(무한 사이클 보너스 +0.25/+0.05/+0.1 은 그대로). `hp_per_stage`(easy .22 / normal .28) · `boss_hp_per_stage` · `speed_cap`(2.2 / 2.6) 도 곡선에서 가져와 `stage["hp_per_stage"|"boss_hp_per_stage"|"speed_cap"]` 로 빌드 시점에 확정한다. hard / harder / hell / crazy 는 항목이 없으므로 `DIFF_MULT` 공식·progression 0.35·ENEMY_SPEED_STAGE_CAP 3.0 그대로(숫자 불변, selftest 로 고정). stages.json `"difficulty"` 표는 legacy(미사용).
+- 돈: `MONEY_KIND` grunt 20~40 / elite 60~100 / mid 250 / boss 600 / word 400 (game.py fallback 표 동일). 부서 최종 보스(mid 아님)는 코인 없이 즉시 `money` 에 가산(+ `"coin"` 이펙트). 잡병·정예·중간보스는 바닥 코인. 스테이지 클리어 시 바닥 코인 전부 자동 회수(배너 접미 ` · 바닥 ₩{n:,} 회수`), 리스폰에도 코인은 남는다(비코인 아이템만 정리). `economy.configure(config["economy"])` 를 World 생성 시 호출. 밸런스 로그 `spent` 에 장비 구매·박스·강화·강화 도박·더블업 스테이크·슬롯 배팅 전부 기록(마을 동안은 `_bal_carry` 에 모아 다음 스테이지 레코드에 합산). 마을의 돈 수입(창고 판매·박스 돈·창고 가득 자동 판매·더블업/슬롯 배당)도 같은 방식으로 `money` 에 이월되어 `World` 의 모든 돈 변동이 기록된다 → 레코드마다 `money_end == 직전 money_end + money_gained - money_spent`. `World.resize()` 는 바닥 아이템(코인)도 지면·너비와 함께 옮긴다(구덩이 위면 가장자리로). `economy.configure` 는 dict 멤버를 기존 값의 모양(tuple / 숫자 / 문자열)에 맞춰 강제하고 안 맞으면 무시한다.
+- 바닥 코인: 자동 흡수 없음(`magnet` 퍼크 장착 시에만 COIN_HOME_* 홈잉). `COIN_TTL` 20s, `COIN_PICK_R` 26px(|Δx|, 플레이어 높이 밴드 안), `COIN_MERGE_R` 18px 안의 착지 코인에 합산(TTL 갱신), `MAX_COINS` 16 초과 시 가장 가까운 더미에 합산, 낙하 중 좌우 산개 vx ±70, 구덩이 위 착지는 가장자리(±10px)로 이동. 스냅샷 `items` 는 `MAX_ITEMS + MAX_COINS` 이하(코인 ≤ 16, 비코인 ≤ 10). effects ttl: coin/word 0.8, boxopen 0.6, slash 0.2 (렌더 FX_TTL 과 일치). 렌더 권장: 값 구간별 더미 크기, `₩{value:,}` 라벨, t < `COIN_BLINK_T`(3s) 깜빡임.
+- 적탄: bullets `"vx"|"vy"` 추가(BULLET_KEYS). 렌더는 링 코어 + 잔상 등으로 가시성 확보(히트박스 불변).
+- 스탯 상점(점수): str/agi/int 1200 × 1.20^lv, rate 2500 × 1.6^lv (max 5), shield 2500 × 1.6^lv (max 3), life 4000 × 1.8^lv (max 3).
+- 레거시 장비(config `"equipment"`): 슬롯당 `"max"`(기본 3), 레벨당 hat shield 1 / gloves rate 0.10 / suit magic 1 / shoes speed 0.06·jump 0.04. `_grant_equip` 은 max 슬롯을 건너뛰고, 전부 max 면 `LEGACY_CAP_MONEY`(300)×스테이지 ₩ 를 대신 지급(배너 `"장비 최대 · 보너스 ₩n"`). 이어하기 시 저장 레벨을 max 로 clamp.
+- 장비 스탯: economy `RARITY_STAT_MULT` {1 / 1.5 / 2.0} 은 스탯 롤에만, `RARITY_MULT` {1 / 1.8 / 3.0} 은 슬롯 고유 효과에만. `STAT_BASE_SUM` 1, `STAT_STAGE_DIV` 4 (스탯 합 = 1 + stage//4). `WORD_RARITY` 0.60 / 0.32 / 0.08.
+- 강화(확정): `economy.enhance_cost(eq, perks)` = 300 × 1.12^lv × `ENHANCE_RARITY_COST` {1.6 / 2.6 / 4.5} (`haggler` 퍼크 ×0.8, MAX_LEVEL 이면 0), `economy.enhance(eq, money, perks) -> (eq, 잔액, 문구, ok)` +1 확정. 도박(`gamble_upgrade`) 은 그대로 upgrade_cost×1.5 기준, 유니크 실패 시 -1. 마을 창고 탭 장착 줄에서 `C` = 강화(창고 줄 `C` 는 판매). `TOWN_HINT["store"]` 갱신.
+- hud["town"]["store"] 추가 키: `"enhance_cost": {slot: int}`, `"can_enhance": {slot: bool}`, `"max_level": int`, `"slot_labels": {slot: label}`, `"slot_order": [slot×6]`, `"effect": {slot: equip_effect|None}`, `"effect_next": {slot: +1레벨 equip_effect|None}`, `"items_slot": [slot per items[i]]`, `"total": total_effect`, `"perks": {perk: rank}`, `"perk_labels": {perk: label}`, `"perk_desc": {perk: desc}`, `"perk_ui": {perk: {rarity: text}}`, `"perk_excluded": [perk]`(현재 캐릭터 미적용 키, 정렬). `"upgrade_cost"` 는 도박 패널용으로 유지.
+- 퍼크(v2.0 2차 패스): economy.PERKS 19키 `{label, slots, min, value{rare,unique}, ui{rare,unique}, desc}`, 장비 dict `"perks": [str]` (normal 0 / rare 1 / unique 2, 스탯 뒤에 뽑아 기존 seed 의 id/roll/stats 불변), `Warehouse.perks()` = `{key: rank}` (같은 키는 최고 등급 하나 = MAX, 합산 없음; total_effect 에 안 섞임). game.py: `World.perks` 캐시 + `_refresh_perks()` (창고 로드 / `_start_stage` / 마을 장착·해제·판매 / `_gear_to_warehouse` 에서만, 프레임마다 아님), `_perk(key)` = 등급 값(없거나 캐릭터 부적합이면 0), `_perk_mult(key)` = 값 또는 1.0, `_perk_exclusions()` (storm 없음 → ult_time·ult_haste, config pierce → pierce; 보스 드롭·타자 gear·상점 목록·박스·슬롯 모든 롤에 `exclude=` 로 전달), `perk_used` 스테이지당 충전(second_wind 플래그 / pit_save 횟수; `_start_stage` 와 리스폰에 리셋). 훅: magnet(코인 홈잉 160px / 9999=전체·딜레이 0), double_jump(`Player.air_jumps`, 85% 높이, 착지마다 충전), ult_time / ult_haste(`_use_skill`: dur×, cd×, `skill_cd = max(cd, dur+1)`), shield_regen(`regen_t`, 피격 시 리셋), shield_burst(실드 흡수 시 반경/전체 적탄 소거 + dmg 0 blast), second_wind(치명타 1회 버팀, 유니크 실드 회복+탄 소거), loot_luck(드롭 확률 ×, 상한 0.9), melee_reach(사거리 ×, 유니크 both_sides), kill_haste(처치 시 fire_cd 0, 유니크 `haste_t` 2s → `_fire_rate_mult` ×1.3), inv_stack(INV_STACK +n), item_time(무기 시간·유도탄 탄수·커피·동료 ×), keep_weapon(사망 시 무기 유지, 유니크 부활 무적 3.5s; 게임오버에 해제), stomp(`air_top` 기준 40px 낙하 착지 → 양방향 wave), pit_save(`_last_ground_x` 로 복귀; 레어 1회, 유니크 무제한·2회째부터 실드 1), pierce(`Bullet.extra` 레어 +1 / 유니크 pierce=True), crit(`_crit`, 총알·근접만), boss_killer(`_boss_dmg`, 총알·근접·존), haggler(economy.enhance_cost). hud 추가 키: `"perks": [{"key","label","rank","text","used"}]` (활성·최고 등급·유니크 우선, 미적용 키 제외), `"perk_labels": {key: label}`; 스테이지 배너는 퍽 세트가 바뀐 스테이지에만 ` · 퍽: 라벨 · 라벨` 접미. `_gear_to_warehouse` 배너 이름 뒤 ` ★라벨`. 밸런스 로그 `revives`. 렌더(molgam): HUD 점수/장비 줄 아래 퍽 칩 줄(등급 색, 충전형 ● 남음/○ 소진), 마을 장착 카드 4줄째 퍽 라벨(미적용/중복 회색), 창고 카드 `★`/`★★`, 상점 카드 스탯 아래 퍽 줄. 리뷰 반영: `Bullet.ally`(분신·드론 탄, crit/boss_killer 제외 — `_collide` 에서 `b.dmg` 그대로), `INV_STACK_MAX` = INV_STACK+2(저장 로드 clamp 와 `_check_snapshot` 상한; 퍽 해제 후에도 초과 스택 유지), `resize()` 가 `_last_ground_x` 도 rx 배율 + 구조 지점은 항상 `_pit_edge()` 통과, 근접 처치도 kill_haste 로 fire_cd 0(`_player_melee` 가 처치 여부를 보고 cd 를 건너뜀), stomp 웨이브 쌍은 `hit` set 공유(걸친 적은 d 1회) 와 `MAX_BULLETS` 가드(shield_burst blast·해머 웨이브도), `economy.configure({"ENHANCE_PERK_DISCOUNT": x})` 가 `PERKS.haggler` rare 값·ui(`강화비 x{v}`) 를 동기화(명시 멤버 우선), keep_weapon 유니크 ui `무기유지+무적 3.5초`(규칙 13, 12자).

@@ -81,6 +81,9 @@ PLATFORM_FILL = "#2b3340"
 PLATFORM_EDGE = "#8fd3ff"
 PLAYER_BULLET = "#fff28a"
 ENEMY_BULLET = "#ff6b6b"
+EB_CORE, EB_RING, EB_GLINT, EB_GHOST = "#ff3b3b", "#1b0f12", "#fff1c9", "#ff7a70"   # v2.0 적탄: 핵 / 테 / 하이라이트 / 잔상
+EB_TRAIL_LEN = 12.0                                  # 잔상 간격(px) ≈ 30 fps 한 프레임 이동량(320 px/s)
+EB_TRAIL_MAX = 120                                   # 화면 탄 수가 이보다 많으면 잔상 생략
 LASER_COLOR = "#7dffea"
 MISSILE_COLOR = "#ffa94d"
 ITEM_GLYPH = {"laser": "L", "homing": "H", "spread": "S", "rapid": "R", "life": "♥"}
@@ -120,6 +123,7 @@ INV_SLOT = 40                                        # 슬롯 한 변(px)
 INV_GAP = 4
 COIN_FILL = "#ffd166"
 COIN_EDGE = "#b8860b"
+COIN_BLINK_T = 3.0                                   # v2.0: 바닥 돈 소멸 전 깜빡임(초, game.COIN_BLINK_T 와 동일)
 MONEY_FG = "#ffd166"
 SLOW_FG = "#6ea8ff"                                  # 야근 커피 슬로우 비네트
 DIFF_LABELS = ["쉬움", "보통", "어려움", "하드", "헬", "크레이지"]
@@ -212,6 +216,7 @@ class Renderer:
         self.drop_shadow_pool: list[int] = []       # 낙하 중인 적의 착지 그림자
         self.bullet_pool: list[int] = []
         self.bullet_img_pool: list[int] = []        # v1.7: 스프라이트 탄(보스 투사체) 이미지 풀
+        self.halo_pool: list[int] = []              # v2.0: 스프라이트 적탄 테 2장/탄 — 전용 풀 (공용 fx 풀 순서 보존)
         self.item_pool: list[tuple[int, int]] = []
         self.platform_pool: list[int] = []
         self.pit_pool: list[int] = []
@@ -234,6 +239,7 @@ class Renderer:
         self.fx_rect_pool: list[int] = []           # 사각형 (폭탄·색종이)
         self.fx_text_pool: list[tuple[int, int]] = []   # 그림자 글자 (동전 +₩ · 단어 폭발)
         self._fx_n = {"poly": 0, "line": 0, "oval": 0, "rect": 0, "text": 0}
+        self._fx_shown = dict(self._fx_n)           # 직전 _fx_end 까지 보이던 개수 — 그 뒤 항목은 이미 숨겨져 있다
         self.word_pool: list[dict] = []             # 낙하 타자 단어 알약 슬롯
         self.ally_pool: list[dict] = []             # 아군(분신/드론/찹츄) 슬롯
         self.inv_ui: dict = {}                      # 인벤토리 바 + 돈 + 슬로우 비네트
@@ -443,17 +449,28 @@ class Renderer:
             self._fx_n[k] = 0
 
     def _fx_end(self) -> None:
-        self._pool_hide_from(self.fx_poly_pool, self._fx_n["poly"])
-        self._pool_hide_from(self.fx_line_pool, self._fx_n["line"])
-        self._pool_hide_from(self.fx_oval_pool, self._fx_n["oval"])
-        self._pool_hide_from(self.fx_rect_pool, self._fx_n["rect"])
-        for pair in self.fx_text_pool[self._fx_n["text"]:]:
+        # [n, shown) 만 숨긴다 — 그 뒤는 지난 프레임에 이미 숨겼다 (탄막 뒤 600개 풀을 매 프레임 다시 숨기지 않게)
+        n, shown = self._fx_n, self._fx_shown
+        for k, pool in (("poly", self.fx_poly_pool), ("line", self.fx_line_pool),
+                        ("oval", self.fx_oval_pool), ("rect", self.fx_rect_pool)):
+            for it in pool[n[k]:shown[k]]:
+                self.cv.itemconfig(it, state="hidden")
+            shown[k] = n[k]
+        for pair in self.fx_text_pool[n["text"]:shown["text"]]:
             for it in pair:
                 self._hide(it)
+        shown["text"] = n["text"]
+
+    def _fx_new(self, it: int) -> int:
+        """새 fx 도형은 캔버스 맨 위에 생긴다 → 글자 풀(동전 ₩ · +₩ · 단어)을 다시 그 위로. 풀이 자랄 때만 불려 비용 ≈ 0."""
+        for pair in self.fx_text_pool:
+            for t in pair:
+                self.cv.tag_raise(t)
+        return it
 
     def _poly(self, pts, fill="", outline="", width=1, smooth=True):
-        it = self._pool_get(self.fx_poly_pool, lambda: self.cv.create_polygon(
-            0, 0, 0, 0, 0, 0, fill="", outline="", smooth=True, splinesteps=6), self._fx_n["poly"])
+        it = self._pool_get(self.fx_poly_pool, lambda: self._fx_new(self.cv.create_polygon(
+            0, 0, 0, 0, 0, 0, fill="", outline="", smooth=True, splinesteps=6)), self._fx_n["poly"])
         self._fx_n["poly"] += 1
         if len(pts) < 6:
             pts = list(pts) + [pts[-2] if pts else 0, pts[-1] if pts else 0] * 3
@@ -462,7 +479,7 @@ class Renderer:
         return it
 
     def _line(self, pts, fill=TEXT_FG, width=1, dash=None, smooth=False):
-        it = self._pool_get(self.fx_line_pool, lambda: self.cv.create_line(0, 0, 0, 0, fill=TEXT_FG),
+        it = self._pool_get(self.fx_line_pool, lambda: self._fx_new(self.cv.create_line(0, 0, 0, 0, fill=TEXT_FG)),
                             self._fx_n["line"])
         self._fx_n["line"] += 1
         self.cv.coords(it, *pts)
@@ -470,7 +487,7 @@ class Renderer:
         return it
 
     def _oval(self, x0, y0, x1, y1, fill="", outline="", width=1, dash=None):
-        it = self._pool_get(self.fx_oval_pool, lambda: self.cv.create_oval(0, 0, 0, 0, fill="", outline=""),
+        it = self._pool_get(self.fx_oval_pool, lambda: self._fx_new(self.cv.create_oval(0, 0, 0, 0, fill="", outline="")),
                             self._fx_n["oval"])
         self._fx_n["oval"] += 1
         self.cv.coords(it, x0, y0, x1, y1)
@@ -478,7 +495,7 @@ class Renderer:
         return it
 
     def _rect(self, x0, y0, x1, y1, fill="", outline="", width=1, dash=None):
-        it = self._pool_get(self.fx_rect_pool, lambda: self.cv.create_rectangle(0, 0, 0, 0, fill="", outline=""),
+        it = self._pool_get(self.fx_rect_pool, lambda: self._fx_new(self.cv.create_rectangle(0, 0, 0, 0, fill="", outline="")),
                             self._fx_n["rect"])
         self._fx_n["rect"] += 1
         self.cv.coords(it, x0, y0, x1, y1)
@@ -1002,18 +1019,29 @@ class Renderer:
 
         # 탄환
         n_img = 0
+        n_halo = 0
+        trail_ok = len(snap["bullets"]) <= EB_TRAIL_MAX     # 탄막이 짙으면 잔상 생략
         for i, b in enumerate(snap["bullets"]):
             it = self._pool_get(self.bullet_pool, lambda: self.cv.create_rectangle(0, 0, 0, 0, outline=""), i)
             # v1.7: sprite 탄(보스 투사체)은 사각형 대신 이미지(중심 앵커). 에셋이 없으면 사각형으로 대체
             im = self._bullet_image(b)
+            hw, hh = b["w"] / 2, b["h"] / 2
             if im is not None:
                 img_it = self._pool_get(self.bullet_img_pool, lambda: self.cv.create_image(0, 0, anchor="center"), n_img)
                 n_img += 1
+                if b["owner"] != "player":
+                    # v2.0: 스프라이트 적탄 — 어두운 테 + 얇은 금색 안쪽 테를 이미지 아래에 깔아 어떤 배경에서도 보이게.
+                    # 전용 halo_pool (생성 때 한 번만 이미지 아래로): 공용 fx 풀 항목을 매 프레임 재정렬하면 풀 순서가 깨진다
+                    x_, y_ = float(b["x"]), float(b["y"])
+                    for pad, col, wd in ((4, EB_RING, 3), (2, WARN_FAR, 1)):
+                        ho = self._pool_get(self.halo_pool, self._new_halo, n_halo)
+                        n_halo += 1
+                        self.cv.coords(ho, x_ - hw - pad, y_ - hh - pad, x_ + hw + pad, y_ + hh + pad)
+                        self.cv.itemconfig(ho, outline=col, width=wd, state="normal")
                 self.cv.coords(img_it, int(b["x"]), int(b["y"]))
                 self.cv.itemconfig(img_it, image=im, state="normal")
                 self._hide(it)
                 continue
-            hw, hh = b["w"] / 2, b["h"] / 2
             kind = b.get("kind", "normal")
             if b.get("gravity") and kind not in ("blast", "wave"):
                 # 포물선 투사체: 바닥에 점선 착지 그림자 (낙하 적과 같은 스타일)
@@ -1028,10 +1056,13 @@ class Renderer:
                 self._hide(it)
                 self._draw_special_bullet(b, kind, gy, now)
                 continue
-            self.cv.coords(it, b["x"] - hw, b["y"] - hh, b["x"] + hw, b["y"] + hh)   # x,y = 중심
             if b["owner"] != "player":
-                fill = ENEMY_BULLET
-            elif kind == "laser":
+                # v2.0: 적탄은 사각형 대신 테 두른 핵 + 하이라이트 + 잔상 (히트박스는 그대로)
+                self._hide(it)
+                self._draw_enemy_bullet(b, hw, hh, trail_ok)
+                continue
+            self.cv.coords(it, b["x"] - hw, b["y"] - hh, b["x"] + hw, b["y"] + hh)   # x,y = 중심
+            if kind == "laser":
                 fill = LASER_COLOR
             elif kind == "missile":
                 fill = MISSILE_COLOR
@@ -1040,6 +1071,7 @@ class Renderer:
             self.cv.itemconfig(it, fill=fill, state="normal")
         self._pool_hide_from(self.bullet_pool, len(snap["bullets"]))
         self._pool_hide_from(self.bullet_img_pool, n_img)
+        self._pool_hide_from(self.halo_pool, n_halo)
         self._pool_hide_from(self.drop_shadow_pool, n_drop)
 
         # 서류 스톰 영역: 뒤집힌 깔때기 회오리 + 바람 고리 + 축을 도는 종이
@@ -1116,17 +1148,25 @@ class Renderer:
             x, y = itd["x"], itd["y"]
             kind = itd.get("kind", "?")
             it_t = self._fnum(itd.get("t", 9.0))
-            blink = it_t < 2.5 and int(it_t * 8) % 2 == 0
             if kind == "coin":
-                # v1.9: 바닥의 돈 — 금색 동전 (타원 + 진한 금 테 + ₩), 살짝 떠오르는 bob
+                # v2.0: 바닥에 남는 돈 — 금액 자릿수(tier)만큼 커지고 쌓이는 동전 더미 + ₩ + 금액 라벨, 소멸 3초 전 깜빡임
                 self._hide(box)
                 self._hide(txt)
-                if not blink:
-                    bob = 1.5 * math.sin(now * 5.0 + x * 0.05)
-                    cr = 6.0 + 0.6 * math.sin(now * 5.0 + x * 0.05)
-                    self._oval(x - cr, y - 7 - cr + bob, x + cr, y - 7 + cr + bob, fill=COIN_FILL, outline=COIN_EDGE, width=2)
-                    self._txt(x, y - 7 + bob, "₩", size=7, fill=_dim_color(COIN_EDGE, 0.6))
+                if it_t < COIN_BLINK_T and int(it_t * 8) % 2 == 0:
+                    continue
+                val = int(self._fnum(itd.get("value")))
+                tier = min(4, int(math.log10(max(1, val))))
+                cr = 6.0 + tier + 0.6 * math.sin(now * 5.0 + x * 0.05)
+                bob = 1.5 * math.sin(now * 5.0 + x * 0.05)
+                for ox, oy in ((3, 5), (-3, 3), (0, 0))[2 - min(2, tier):]:     # 뒤 → 앞 순서로 쌓기 (1..3 장)
+                    self._oval(x + ox - cr, y - 7 + oy - cr + bob, x + ox + cr, y - 7 + oy + cr + bob,
+                               fill=COIN_FILL, outline=COIN_EDGE, width=2)
+                self._txt(x, y - 7 + bob, "₩", size=7 + tier // 2, fill=_dim_color(COIN_EDGE, 0.6))
+                px_ = self._fnum((snap.get("player") or {}).get("x"))
+                if val >= 100 or abs(px_ - x) < 80:
+                    self._txt(x, y - 7 - cr - 9 + bob, "₩{:,}".format(val), size=8, fill=MONEY_FG)
                 continue
+            blink = it_t < 2.5 and int(it_t * 8) % 2 == 0
             glyph, gcol = INV_GLYPH.get(kind, (ITEM_GLYPH.get(kind, "?"), "#ffd166"))
             self.cv.coords(box, x - s / 2, y - s, x + s / 2, y)
             self.cv.coords(txt, x, y - s / 2)
@@ -1294,6 +1334,30 @@ class Renderer:
         self.cv.tag_raise(self.ult_item)
 
     # --- v1.9 특수 탄 (폭탄 / 폭발 / 지면 충격파)
+    def _new_halo(self) -> int:
+        """스프라이트 적탄 테 1장. 생성 때 한 번만 모든 탄 이미지 아래(플레이어·적 위)로 내린다; 이후 재정렬 없음."""
+        it = self.cv.create_oval(0, 0, 0, 0, fill="", outline="")
+        self.cv.tag_lower(it, self.bullet_img_pool[0])      # 첫 탄 이미지를 막 꺼낸 뒤에만 불린다
+        return it
+
+    def _draw_enemy_bullet(self, b: dict, hw: float, hh: float, trail: bool) -> None:
+        """v2.0: 적탄 — 어두운 테(밝은 배경용) + 채도 높은 빨간 핵(어두운 배경용) + 하이라이트 + 진행 반대쪽 잔상 2점.
+        히트박스(w,h)는 그대로, 그림만 ~16 px 로 키움. 스냅샷에 vx/vy 가 없으면(0) 잔상 없이 핵만 그린다."""
+        x, y = float(b["x"]), float(b["y"])
+        ro = max(7.0, max(hw, hh) + 3.0)                     # 8x4 -> 7, 회장 도장 20x20 -> 13
+        vx, vy = self._fnum(b.get("vx")), self._fnum(b.get("vy"))
+        sp = math.hypot(vx, vy)
+        if trail and sp > 1.0:
+            ux, uy = vx / sp, vy / sp
+            for k, rr in ((1.0, 0.45), (0.55, 0.65)):        # 먼 잔상부터 (아래에 깔림)
+                gx, gy_ = x - ux * EB_TRAIL_LEN * k, y - uy * EB_TRAIL_LEN * k
+                r = ro * rr
+                self._oval(gx - r, gy_ - r, gx + r, gy_ + r, fill=EB_GHOST, outline=EB_RING, width=1)
+        self._oval(x - ro, y - ro, x + ro, y + ro, fill=EB_CORE, outline=EB_RING, width=2)
+        g = max(1.5, ro * 0.3)
+        cx, cy = x - ro * 0.35, y - ro * 0.35
+        self._oval(cx - g, cy - g, cx + g, cy + g, fill=EB_GLINT, outline="")
+
     def _draw_special_bullet(self, b: dict, kind: str, gy: float, now: float) -> None:
         x, y = float(b["x"]), float(b["y"])
         w, h = max(4.0, self._fnum(b.get("w")) or 12.0), max(4.0, self._fnum(b.get("h")) or 12.0)
@@ -1657,6 +1721,7 @@ class Renderer:
             self.hud_items["boss"] = self.cv.create_rectangle(0, 0, 0, 0, fill="#ff5252", outline="")
             self.hud_items["bosstxt"] = self._text2(0, 0, "", size=9, anchor="w")
             self.hud_items["money"] = self._text2(0, 0, "", size=10, anchor="nw", fill=MONEY_FG)   # v1.9
+            self.hud_items["perks"] = []      # v2.0: 퍽 칩 줄 (텍스트 쌍 풀, 필요한 만큼 생성)
         hearts = "♥" * max(0, hud["lives"]) + "♡" * max(0, self.config.get("lives", 3) - hud["lives"])
         if hud.get("shield_max"):
             hearts += " 실드" + "◆" * max(0, hud["shield"]) + "◇" * max(0, hud["shield_max"] - hud["shield"])
@@ -1718,6 +1783,28 @@ class Renderer:
         else:
             for it in self.hud_items["equip"]:
                 self._hide(it)
+        # v2.0: 퍽 칩 줄 — 장착 레어+ 장비의 퍽 라벨을 등급 색으로 (충전형 second_wind / pit_save 는 ● 남음 / ○ 소진)
+        chips = [d for d in hud.get("perks") if isinstance(d, dict)] if isinstance(hud.get("perks"), list) else []
+        pool = self.hud_items["perks"]
+        while len(pool) < len(chips):
+            pool.append(self._text2(0, 0, "", size=8, anchor="nw"))
+        px = 12
+        for i, d in enumerate(chips):
+            label = str(d.get("label") or d.get("key") or "")
+            if d.get("key") in ("second_wind", "pit_save"):
+                label = ("○ " if d.get("used") else "● ") + label
+            txt = "[%s]" % label
+            col = RARITY_COLORS["unique"] if d.get("rank") == 2 else RARITY_COLORS["rare"]
+            self._set_text2(pool[i], px, bottom - 2, txt, fill=_dim_color(col, 0.6) if d.get("used") else col)
+            for it in pool[i]:
+                self._show(it)
+            px += self._measure(txt, 8) + 6
+        for pair in pool[len(chips):]:
+            for it in pair:
+                self._hide(it)
+        if chips:
+            right = max(right, px + 2)
+            bottom += 16
         self.cv.coords(self.hud_items["bg"], 4, 4, right + 20, bottom)
         self._show(self.hud_items["bg"])
         for it in self.hud_items["line"]:
@@ -2039,6 +2126,32 @@ class Renderer:
         return "힘+%s 민+%s 지+%s" % (st.get("str", 0), st.get("agi", 0), st.get("int", 0))
 
     @staticmethod
+    def _perk_line(store: dict, eq: dict, rcol: str, dup: bool = True):
+        """v2.0: 장비 퍽 라벨을 ' · ' 로 잇는다(유니크 2개). 캐릭터 미적용은 ' (미적용)', 장착 중 더 높은 등급에 밀린
+        중복은 ' (중복)'(dup=장착 카드만); 전부 회색이면 줄도 회색. 라벨은 hud.town.store 의 perk_labels(economy 미임포트)."""
+        labels = store.get("perk_labels") if isinstance(store.get("perk_labels"), dict) else {}
+        excluded = set(store.get("perk_excluded") or [])
+        active = store.get("perks") if (dup and isinstance(store.get("perks"), dict)) else {}
+        rank = {"normal": 0, "rare": 1, "unique": 2}.get(eq.get("rarity"), 0)
+        parts, dim = [], 0
+        for k in (eq.get("perks") or []):
+            name = str(labels.get(k, k))
+            try:
+                beaten = int(active.get(k, 0) or 0) > rank
+            except (TypeError, ValueError):
+                beaten = False
+            if k in excluded:
+                name += " (미적용)"
+                dim += 1
+            elif beaten:
+                name += " (중복)"
+                dim += 1
+            parts.append(name)
+        if not parts:
+            return "", rcol
+        return " · ".join(parts), (LOCKED_FG if dim == len(parts) else rcol)
+
+    @staticmethod
     def _eq_price(eq: dict):
         for k in ("price", "buy_price", "cost", "sell_price"):
             v = eq.get(k)
@@ -2225,7 +2338,8 @@ class Renderer:
         afford = shop.get("afford") if isinstance(shop.get("afford"), list) else []
         n = len(stock)
         while len(ui["cards"]) < n:
-            ui["cards"].append(self._new_card(lines=7, tag=True, extra=3))
+            ui["cards"].append(self._new_card(lines=8, tag=True, extra=3))
+        store = town.get("store") if isinstance(town.get("store"), dict) else {}   # v2.0: perk_labels 출처
         cell = (right - left - 32) // max(1, n)
         y0, y1 = cy0 + 2, cy1 - 4
         for i, eq in enumerate(stock):
@@ -2257,7 +2371,7 @@ class Renderer:
                 self._card_line(c, 2, x, y0 + 84, "무엇이 나올까", size=8, fill="#c7d2e0", bold=False)
                 self._card_line(c, 3, x, y0 + 100, price_txt, size=9, fill=price_col)
                 self._card_line(c, 4, x, y0 + 118, "장비·아이템·돈", size=8, fill=LOCKED_FG, bold=False)
-                for k in (5, 6):
+                for k in (5, 6, 7):
                     self._card_line(c, k, x, y0, "", size=8)
                 continue
             for it in c["extra"]:
@@ -2283,6 +2397,8 @@ class Renderer:
                     v = 0
                 self._card_line(c, 4 + k, x, y0 + 104 + 15 * k, "%s +%d" % (sname, v), size=8,
                                 fill="#c7d2e0" if v > 0 else LOCKED_FG, bold=False)
+            ptxt, pcol = self._perk_line(store, eq, rcol, dup=False)      # v2.0: 사기 전에 퍽이 보이게
+            self._card_line(c, 7, x, y0 + 150, self._fit(ptxt, 8, maxw), size=8, fill=pcol, bold=False)
         for c in ui["cards"][n:]:
             self._hide_card(c)
         return n
@@ -2293,7 +2409,7 @@ class Renderer:
         items = list(store.get("items") or [])
         mode = store.get("mode") or "list"
         while len(ui["eq"]) < len(SLOT_ORDER):
-            ui["eq"].append(self._new_card(lines=3, tag=False, extra=0))
+            ui["eq"].append(self._new_card(lines=4, tag=False, extra=0))     # v2.0: 4줄째 = 퍽
         while len(ui["grid"]) < 24:
             ui["grid"].append(self._new_card(lines=2, tag=False, extra=0))
         inner = right - left - 32
@@ -2314,16 +2430,19 @@ class Renderer:
             else:
                 self._hide(c["sel"])
             eq = equipped.get(slot)
-            self._card_line(c, 0, x, ey0 + 4, SLOT_LABEL.get(slot, slot), size=8, fill=LOCKED_FG, bold=False)
+            self._card_line(c, 0, x, ey0 + 3, SLOT_LABEL.get(slot, slot), size=8, fill=LOCKED_FG, bold=False)
             if isinstance(eq, dict):
                 rarity = eq.get("rarity") or "normal"
                 rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
-                self._card_line(c, 1, x, ey0 + 18, self._fit(eq.get("name") or "?", 9, cell - 14), size=9, fill=TEXT_FG)
-                self._card_line(c, 2, x, ey0 + 36, "%s · Lv %s" % (RARITY_LABEL.get(rarity, rarity), eq.get("level", 0)),
+                self._card_line(c, 1, x, ey0 + 15, self._fit(eq.get("name") or "?", 9, cell - 14), size=9, fill=TEXT_FG)
+                self._card_line(c, 2, x, ey0 + 29, "%s · Lv %s" % (RARITY_LABEL.get(rarity, rarity), eq.get("level", 0)),
                                 size=8, fill=rcol, bold=False)
+                ptxt, pcol = self._perk_line(store, eq, rcol)               # v2.0: 퍽 라벨 (미적용 / 중복은 회색)
+                self._card_line(c, 3, x, ey0 + 44, self._fit(ptxt, 8, cell - 14), size=8, fill=pcol, bold=False)
             else:
                 self._card_line(c, 1, x, ey0 + 22, "—", size=11, fill=LOCKED_FG)
                 self._card_line(c, 2, x, ey0 + 40, "", size=8)
+                self._card_line(c, 3, x, ey0 + 44, "", size=8)
         # 아래: 창고 12×2
         gcell = inner // 12
         gh = 40
@@ -2347,7 +2466,8 @@ class Renderer:
                 rarity = eq.get("rarity") or "normal"
                 rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
                 self._card_line(c, 0, x, y + 4, self._fit(eq.get("name") or "?", 8, gcell - 10), size=8, fill=rcol)
-                self._card_line(c, 1, x, y + 21, "%s Lv%s" % (SLOT_LABEL.get(eq.get("slot"), "")[:3], eq.get("level", 0)),
+                star = {"rare": " ★", "unique": " ★★"}.get(rarity, "")      # v2.0: 퍽 개수 = 등급
+                self._card_line(c, 1, x, y + 21, "%s Lv%s%s" % (SLOT_LABEL.get(eq.get("slot"), "")[:3], eq.get("level", 0), star),
                                 size=8, fill="#c7d2e0", bold=False)
             else:
                 self._card_line(c, 0, x, y + 12, "—", size=9, fill=_dim_color(LOCKED_FG, 0.8))
@@ -2422,13 +2542,8 @@ class Renderer:
                     self._hide(it)
             if i == 0:
                 # 강화 도박: 대상 장비 카드(글줄) + 확률표
-                target = gm.get("target")
-                items = ((town.get("store") or {}).get("items") if isinstance(town.get("store"), dict) else None) or []
-                eq = None
-                if isinstance(target, dict):
-                    eq = target
-                elif isinstance(target, int) and 0 <= target < len(items):
-                    eq = items[target]
+                # v2.0: game 은 target(economy.SLOTS 인덱스) 와 함께 target_eq(장착 장비 dict) · target_cost(도박 비용) 를 준다
+                eq = gm.get("target_eq") if isinstance(gm.get("target_eq"), dict) else None
                 if isinstance(eq, dict):
                     rarity = eq.get("rarity") or "normal"
                     rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
@@ -2436,12 +2551,13 @@ class Renderer:
                     self._gamble_line(g, 1, x, y0 + 50, "%s · %s · Lv %s" % (SLOT_LABEL.get(eq.get("slot"), eq.get("slot", "")),
                                                                             RARITY_LABEL.get(rarity, rarity), eq.get("level", 0)),
                                       size=9, fill=rcol, bold=False)
-                    cost = self._eq_price({"price": gm.get("cost")}) if gm.get("cost") is not None else None
+                    cost = self._eq_price({"price": gm.get("target_cost")}) if gm.get("target_cost") is not None else None
                     self._gamble_line(g, 2, x, y0 + 70, ("비용 " + self._money_text(cost)) if cost is not None else "", size=9, fill=MONEY_FG)
                 else:
                     self._gamble_line(g, 0, x, y0 + 34, "대상 장비 없음", size=10, fill=LOCKED_FG)
                     self._gamble_line(g, 1, x, y0 + 54, "창고에 장비를 넣어 두세요", size=8, fill=LOCKED_FG, bold=False)
-                self._gamble_line(g, 3, x, y0 + 96, "60% ↑2   /   30% –   /   10% ↓3", size=10, fill="#c7d2e0")
+                down = 1 if isinstance(eq, dict) and eq.get("rarity") == "unique" else 3   # economy: 유니크 실패는 -1
+                self._gamble_line(g, 3, x, y0 + 96, "60% ↑2   /   30% –   /   10% ↓" + str(down), size=10, fill="#c7d2e0")
                 self._gamble_line(g, 4, x, y0 + 118, "강화 레벨을 걸고 주사위를 굴린다", size=8, fill=LOCKED_FG, bold=False)
             elif i == 1:
                 # 더블업: 판돈 · 연속 ×N · 뒤집히는 코인

@@ -40,12 +40,12 @@ MAX_ZONES = 3
 ULT_T = 1.0                     # v2.0: ultimate portrait burst (C skill) — grow, hold, vanish in about a second
 DEFAULT_UNLOCK_STAGE = 5
 DEFAULT_SHOP = {                # key: [label, base cost, cost growth per level, max level (0 = unlimited)]
-    "str": ["힘 +1", 1500, 1.25, 0],
-    "agi": ["민첩 +1", 1500, 1.25, 0],
-    "int": ["지혜 +1", 1500, 1.25, 0],
+    "str": ["힘 +1", 1200, 1.20, 0],        # v2.0: flatter (3 levels = one stage of score)
+    "agi": ["민첩 +1", 1200, 1.20, 0],
+    "int": ["지혜 +1", 1200, 1.20, 0],
     "rate": ["연사 +20%", 2500, 1.6, 5],
-    "shield": ["실드 +1", 4000, 1.8, 3],
-    "life": ["목숨 +1", 5000, 2.0, 3],
+    "shield": ["실드 +1", 2500, 1.6, 3],
+    "life": ["목숨 +1", 4000, 1.8, 3],
 }
 SHOP_ORDER = ("str", "agi", "int", "rate", "shield", "life", "next")
 STAT_KEYS = ("agi", "str", "int")
@@ -68,6 +68,7 @@ HOMING_AMMO = 25
 MAX_ITEMS = 10
 INV_SLOTS = 5                   # v1.9: inventory slots (keys 1..5)
 INV_STACK = 3                   # max count per slot
+INV_STACK_MAX = INV_STACK + 2   # v2.0 inv_stack perk cap (unique +2): save/load clamp + snapshot contract
 INV_FLASH_T = 0.4
 BOMB_BOSS_FRAC = 0.15           # 결재 폭탄: bosses lose this fraction of max hp, grunts/elites die
 COFFEE_T = 6.0                  # 야근 커피: slow duration
@@ -75,8 +76,13 @@ SLOW_FACTOR = 0.4               # enemies / enemy bullets run at this fraction o
 DECOY_T, DECOY_HP, DECOY_FIRE = 8.0, 3, 0.25
 DRONE_T, DRONE_FIRE = 15.0, 0.33
 DOG_T, DOG_SPEED, DOG_DMG, DOG_KNOCK, DOG_CD = 10.0, 260.0, 2, 200.0, 0.6
-COIN_TTL = 12.0
-COIN_HOME_DELAY, COIN_HOME_SPEED = 0.5, 520.0
+COIN_TTL = 20.0                 # v2.0: coins stay where the enemy died (no homing) and must be walked over
+COIN_HOME_DELAY, COIN_HOME_SPEED = 0.5, 520.0   # homing only with the rare-gear "magnet" perk
+COIN_PICK_R = 26.0              # px: |coin.x - player.x| within which a floor coin is picked up
+COIN_MERGE_R = 18.0             # px: a new drop merges into an on-ground pile this close
+COIN_BLINK_T = 3.0              # s: renderer blinks a coin about to expire
+MAX_COINS = 16                  # piles on the floor; above this a drop merges into the nearest pile
+LEGACY_CAP_MONEY = 300          # v2.0: ₩ per stage a dept boss pays once every legacy slot is at its max
 ENEMY_REACH_PAD = 22.0          # enemy melee reach = w*0.6 + this
 ENEMY_ATTACK_T = 0.45
 ENEMY_HIT_WINDOW = (0.15, 0.30)
@@ -105,7 +111,7 @@ DOUBLE_STAKES = (0.10, 0.25, 0.50)      # fraction of money staked per 더블업
 SLOT_BETS = (100, 500, 2000)
 TOWN_HINT = {"stat": "←→ 항목 · Enter 구매 · Tab 탭",
              "shop": "←→ 항목 · Enter 구매 · Tab 탭",
-             "store": "←→ 항목 · Enter 장착/해제 · C 판매 · ↑↓ 줄 전환 · Tab 탭",
+             "store": "←→ 항목 · Enter 장착/해제 · C 판매(창고)/강화(장착) · ↑↓ 줄 전환 · Tab 탭",
              "gamble": "←→ 게임 · Enter 플레이 · C 대상/배팅 변경 · Tab 탭"}
 DEFAULT_PROGRESSION = {"hp_per_stage": 0.35, "boss_hp_per_stage": 0.08, "drop_grunt": 0.10, "drop_elite": 0.30}
 
@@ -123,13 +129,14 @@ SPEED_PER_AGI = 0.06            # move-speed multiplier = 1 + SPEED_PER_AGI * (a
 JUMP_PER_AGI = 0.04             # jump multiplier      = 1 + JUMP_PER_AGI * (agi - STAT_BASE)
 BULLET_PER_INT = 0.08           # bullet speed = BULLET_SPEED * (1 + BULLET_PER_INT * (int - STAT_BASE)); not laser
 
-# --- v1.7: equipment (granted by a department stage's final boss; levels unlimited)
+# --- v1.7: equipment (granted by a department stage's final boss). v2.0: halved per level, "max" 3 per slot
 EQUIP_ORDER = ("hat", "gloves", "suit", "shoes")     # tie order when picking the lowest-level slot
+DEFAULT_EQUIP_MAX = 3
 DEFAULT_EQUIPMENT = {
-    "hat": {"label": "안전모", "shield": 1},
-    "gloves": {"label": "작업 장갑", "rate": 0.2},
-    "suit": {"label": "사신 정장", "magic": 1},
-    "shoes": {"label": "운동화", "speed": 0.12, "jump": 0.08},
+    "hat": {"label": "안전모", "shield": 1, "max": DEFAULT_EQUIP_MAX},
+    "gloves": {"label": "작업 장갑", "rate": 0.1, "max": DEFAULT_EQUIP_MAX},
+    "suit": {"label": "사신 정장", "magic": 1, "max": DEFAULT_EQUIP_MAX},
+    "shoes": {"label": "운동화", "speed": 0.06, "jump": 0.04, "max": DEFAULT_EQUIP_MAX},
 }
 EQUIP_BANNER_T = 2.0
 MID_BANNER_T = 1.5
@@ -167,8 +174,19 @@ DIFFICULTIES = ["easy", "normal", "hard", "harder", "hell", "crazy"]   # v1.9: c
 DIFF_LABEL = {"easy": "쉬움", "normal": "보통", "hard": "어려움", "harder": "하드", "hell": "헬", "crazy": "크레이지"}
 DIFF_MULT = {"easy": 0.7, "normal": 1.0, "hard": 1.3, "harder": 1.6, "hell": 2.2, "crazy": 3.0}
 DIFF_UNLOCK = {"hell": ("any", 20), "crazy": ("hell", 30)}   # difficulty -> (cleared-on, stages cleared)
+# v2.0: explicit curve for the learning difficulties ONLY (stages.json "curve" overrides). hard / harder / hell /
+# crazy have no entry and keep the DIFF_MULT-derived formula untouched. warmup / count_warmup multiply hp+speed /
+# count on stages 1-3; hp_per_stage / boss_hp_per_stage / speed_cap replace progression / ENEMY_SPEED_STAGE_CAP.
+DIFF_CURVE = {
+    "easy": {"hp": 0.70, "speed": 0.80, "count": 0.85, "proj": 0.70, "money": 0.85,
+             "warmup": {1: 0.65, 2: 0.80, 3: 0.92}, "count_warmup": {1: 0.75, 2: 0.85, 3: 0.95},
+             "hp_per_stage": 0.22, "boss_hp_per_stage": 0.08, "speed_cap": 2.2},
+    "normal": {"hp": 1.00, "speed": 1.00, "count": 1.00, "proj": 1.00, "money": 1.00,
+               "warmup": {1: 0.80, 2: 0.90, 3: 1.00}, "count_warmup": {1: 0.85, 2: 0.95, 3: 1.00},
+               "hp_per_stage": 0.28, "boss_hp_per_stage": 0.08, "speed_cap": 2.6},
+}
 
-DEFAULT_DIFFICULTY = {"easy": {"hp": 0.8, "speed": 0.9, "count": 0.8},
+DEFAULT_DIFFICULTY = {"easy": {"hp": 0.8, "speed": 0.9, "count": 0.8},   # legacy: never drives a stage (v1.9+)
                       "normal": {"hp": 1.0, "speed": 1.0, "count": 1.0},
                       "hard": {"hp": 1.6, "speed": 1.25, "count": 1.4}}
 DEFAULT_WAVE = {"base_count": 3, "per_wave": 1, "per_stage": 0.35, "per_cycle": 1, "max_count": 10,
@@ -212,7 +230,7 @@ class _NoEconomy:
 
     @staticmethod
     def money_drop(rng, kind, stage, diff_mult, acc_bonus):
-        base = {"grunt": 30, "elite": 80, "mid": 300, "boss": 800, "word": 500}.get(kind, 0)
+        base = {"grunt": 30, "elite": 80, "mid": 250, "boss": 600, "word": 400}.get(kind, 0)   # mirrors MONEY_KIND
         return int(base * (1 + 0.05 * (stage - 1)) * diff_mult * (1 + acc_bonus))
 
 
@@ -279,10 +297,15 @@ class _Ent:
 
 class Player(_Ent):
     __slots__ = ("crouch", "fire_cd", "shoot_t", "inv_t", "dead", "death_t", "drop_t", "jump_buf", "on_platform",
-                 "weapon", "weapon_t", "ammo", "shield", "skill_cd", "melee_t", "combo", "combo_t", "ult_t")
+                 "weapon", "weapon_t", "ammo", "shield", "skill_cd", "melee_t", "combo", "combo_t", "ult_t",
+                 "air_jumps", "regen_t", "haste_t", "air_top")
 
     def __init__(self):
         super().__init__()
+        self.air_jumps = 0          # v2.0 perks: air jumps left this flight (double_jump)
+        self.regen_t = 0.0          # s without a hit (shield_regen)
+        self.haste_t = 0.0          # s of +30 % fire rate left (kill_haste unique)
+        self.air_top = 0.0          # highest y of the current flight (stomp)
         self.combo = 0              # v1.9: melee combo counter (knife 3-hit)
         self.combo_t = 0.0
         self.shield = 0
@@ -374,10 +397,13 @@ class Enemy(_Ent):
 class Bullet:
     __slots__ = ("x", "y", "w", "h", "vx", "vy", "owner", "dmg", "pierce", "hit", "dead", "stamp",
                  "kind", "ttl", "px", "py", "mdmg", "element", "sprite", "anim", "frame", "anim_t",
-                 "gravity", "r", "fuse", "r_max")
+                 "gravity", "r", "fuse", "r_max", "extra", "ally")
 
     def __init__(self, x, y, w, h, vx, vy, owner, dmg=1, pierce=False, stamp=False, kind="normal", ttl=None,
-                 mdmg=0, element=None, sprite=None, anim=None, gravity=False, r=0.0, fuse=None):
+                 mdmg=0, element=None, sprite=None, anim=None, gravity=False, r=0.0, fuse=None, extra=0,
+                 ally=False):
+        self.ally = bool(ally)           # v2.0: shot by a decoy / drone ally -> no crit / boss_killer scaling
+        self.extra = int(extra)          # v2.0 "pierce" perk: enemies it may pass beyond the first (pierce=False)
         self.gravity = gravity           # v1.9: parabolic projectile (bomb / boulder)
         self.r = r                       # blast radius (kind "blast": grows to r_max over BLAST_T)
         self.r_max = r
@@ -460,6 +486,8 @@ class World:
     def __init__(self, stages: dict, config: dict, save: dict, width: int, height: int, seed: int | None = None):
         self.stages = stages or {}
         self.config = config or {}
+        if hasattr(economy, "configure"):       # v2.0: config.json "economy" overrides economy constants
+            economy.configure(self.config.get("economy"))
         self.rng = random.Random(seed)
         self.width = max(320, int(width))
         self.height = max(120, int(height))
@@ -469,7 +497,19 @@ class World:
         self.executives = list(self.stages.get("executive_stages") or [])
         self.ranks = dict(self.stages.get("ranks") or {})
         self.difficulty = dict(DEFAULT_DIFFICULTY)
-        self.difficulty.update(self.stages.get("difficulty") or {})
+        self.difficulty.update(self.stages.get("difficulty") or {})     # legacy table, unused since v1.9
+        # v2.0: easy / normal curve (DIFF_CURVE merged with stages.json "curve"; warm-up keys are stage numbers)
+        self.curve: dict[str, dict] = {}
+        cfg_curve = self.stages.get("curve") if isinstance(self.stages.get("curve"), dict) else {}
+        for k in set(DIFF_CURVE) | set(cfg_curve):
+            cv = {kk: (dict(vv) if isinstance(vv, dict) else vv) for kk, vv in DIFF_CURVE.get(k, {}).items()}
+            for kk, vv in (cfg_curve.get(k) or {}).items():
+                if isinstance(vv, dict):
+                    cv[kk] = {int(s): float(f) for s, f in vv.items() if str(s).lstrip("-").isdigit()}
+                else:
+                    cv[kk] = vv
+            if all(x in cv for x in ("hp", "speed", "count", "proj", "money")):
+                self.curve[k] = cv
         self.wave_cfg = dict(DEFAULT_WAVE)
         self.wave_cfg.update(self.stages.get("wave") or {})
         self.progression = dict(DEFAULT_PROGRESSION)
@@ -529,6 +569,14 @@ class World:
         # v1.9 meta progression (kept across game overs): money, warehouse, difficulty, clears, inventory
         self.money = max(0, int(save.get("money", 0) or 0))
         self.warehouse = economy.Warehouse(save.get("warehouse") if isinstance(save.get("warehouse"), dict) else None)
+        # v2.0 perks: {key: rank} cache of the equipped rare+ gear (refreshed on load / stage start / town changes,
+        # never per frame), character mask, per-stage charges (second_wind flag, pit_save count), last floor x
+        self.perks: dict[str, int] = {}
+        self._perk_ex: set[str] = set()
+        self.perk_used: dict = {}
+        self._perks_shown: tuple | None = None   # perk set announced in the last stage banner
+        self._last_ground_x = 0.0
+        self._refresh_perks()
         self.best_clear: dict[str, int] = {}
         for k, v in (save.get("best_clear") or {}).items():
             if k in DIFFICULTIES:
@@ -539,7 +587,7 @@ class World:
         self.inventory: list[dict | None] = [None] * INV_SLOTS
         for i, it in enumerate((save.get("inventory") or [])[:INV_SLOTS]):
             if isinstance(it, dict) and it.get("kind") in ITEM_KINDS and it.get("kind") != "coin":
-                self.inventory[i] = {"kind": it["kind"], "count": max(1, min(INV_STACK, int(it.get("count", 1))))}
+                self.inventory[i] = {"kind": it["kind"], "count": max(1, min(INV_STACK_MAX, int(it.get("count", 1))))}
         self.inv_flash: int | None = None
         self.inv_flash_t = 0.0
         self.allies: list[Ally] = []
@@ -551,6 +599,7 @@ class World:
         self.town: dict | None = None
         self.balance_log: list[dict] = []       # per-stage balance records (drained by the integration layer)
         self._bal: dict = {}                    # the record being built for the current stage
+        self._bal_carry: dict = {}              # v2.0: shop / town sinks between stages -> next stage's record
         self.shop_stock: list[dict] = []        # equipment stock of the current town (refreshed every town)
         self.shop_stock_stage = 0
         self.saved_upgrades = dict(save.get("upgrades") or {})
@@ -691,8 +740,9 @@ class World:
         return BULLET_SPEED * (1.0 + BULLET_PER_INT * (s["int"] - STAT_BASE)) if s else BULLET_SPEED
 
     def _fire_rate_mult(self, c: dict) -> float:
+        haste = 1.3 if self.player.haste_t > 0 else 1.0     # v2.0 kill_haste unique: +30 % for 2 s after a kill
         return (float(c.get("fire_rate", 1.0)) * (1.0 + 0.2 * self.upgrades.get("rate", 0))
-                * (1.0 + self._equip_bonus("rate")))
+                * (1.0 + self._equip_bonus("rate")) * haste)
 
     def _elem_mult(self, attacker: str | None, target: str | None) -> float:
         if attacker not in self.elements or target not in self.elements:
@@ -716,6 +766,18 @@ class World:
         self._damage_enemy(e, total)
         return total
 
+    def _crit(self, dmg: int, x: float, y: float) -> int:
+        """v2.0 "crit" perk: x2 on bullets / melee only (zones, allies, bombs and typing wipes stay unscaled)."""
+        pc = self._perk("crit")
+        if pc and self.rng.random() < pc:
+            self._effect("text", x, y - 14, text="크리!")
+            return int(dmg) * 2
+        return int(dmg)
+
+    def _boss_dmg(self, e: Enemy, dmg: int) -> int:
+        """v2.0 "boss_killer" perk: +20 / +40 % player damage on bosses + mid bosses (bomb / wipe excluded)."""
+        return int(round(dmg * (1.0 + self._perk("boss_killer")))) if e.boss else int(dmg)
+
     def resize(self, width: int, height: int) -> None:
         width = max(320, int(width))
         height = max(120, int(height))
@@ -728,6 +790,7 @@ class World:
         dy = self.ground_y - old_ground
         self.platforms = [(x * rx, y + dy, w, h) for (x, y, w, h) in self.platforms]
         self.pits = [(x * rx, w) for (x, w) in self.pits]
+        self._last_ground_x = min(self.width - PLAYER_W / 2, max(PLAYER_W / 2, self._last_ground_x * rx))
         for ent in [self.player] + self.enemies:
             ent.x *= rx
             ent.y += dy
@@ -737,6 +800,11 @@ class World:
         for fx in self.effects:
             fx["x"] *= rx
             fx["y"] += dy
+        for it in self.items:                   # v2.0: floor coins (20 s piles) follow the ground / width too
+            it.x = min(self.width - 10.0, max(10.0, it.x * rx))
+            it.y += dy
+            if it.on_ground and it.kind == "coin" and self._over_pit(it.x):
+                it.x = self._pit_edge(it.x)
 
     def set_paused(self, paused: bool) -> None:
         if paused and self.state == "play":
@@ -865,7 +933,8 @@ class World:
                          for w in self.warnings],
             "bullets": [{"x": b.x, "y": b.y, "w": b.w, "h": b.h, "owner": b.owner, "kind": b.kind,
                          "sprite": b.sprite, "anim": b.anim, "frame": b.frame, "flip": b.vx < 0,
-                         "gravity": b.gravity, "r": round(b.r, 1)}
+                         "gravity": b.gravity, "r": round(b.r, 1),
+                         "vx": round(b.vx, 1), "vy": round(b.vy, 1)}     # v2.0: px/s, renderer trail direction
                         for b in self.bullets],
             "items": [{"x": it.x, "y": it.y, "kind": it.kind, "t": it.t, "value": it.value} for it in self.items],
             "zones": [{"kind": z["kind"], "x": z["x"], "w": z["w"], "h": ZONE_H, "t": z["t"], "ttl": z["ttl"]}
@@ -913,9 +982,34 @@ class World:
                     "melee_hit": int(p.combo),
                     "slow_t": round(self.slow_t, 2),
                     "equip_effect": self._equip_fx(),
+                    "perks": self._hud_perks(),           # v2.0 perk chips (active, unique first)
+                    "perk_labels": {k: str(v.get("label", k)) for k, v in (getattr(economy, "PERKS", {}) or {}).items()},
                     "equipped": {k: (dict(v) if v else None) for k, v in self.warehouse.equipped.items()},
                     "town": self._town_view()},
         }
+
+    def _hud_perks(self) -> list:
+        """v2.0: [{key, label, rank, text, used}] for the active perk set (character-mismatched keys dropped),
+        unique first then PERKS order. `used` = a per-stage charge (second_wind / rare pit_save) is spent."""
+        table = getattr(economy, "PERKS", {}) or {}
+        names = getattr(economy, "RARITY", ("normal", "rare", "unique"))
+        order = list(table)
+        out = []
+        for k, r in self.perks.items():
+            if k not in table or k in self._perk_ex:
+                continue
+            r = max(0, min(len(names) - 1, int(r)))
+            ui = table[k].get("ui")
+            text = ui.get(names[r], "") if isinstance(ui, dict) else str(ui or "")
+            if k == "second_wind":
+                used = bool(self.perk_used.get("second_wind"))
+            elif k == "pit_save":
+                used = r < 2 and int(self.perk_used.get("pit_save", 0)) >= 1
+            else:
+                used = False
+            out.append({"key": k, "label": str(table[k].get("label", k)), "rank": r, "text": str(text), "used": used})
+        out.sort(key=lambda d: (-d["rank"], order.index(d["key"])))
+        return out
 
     def save_data(self) -> dict:
         return {"stage": int(self.save_stage), "best": int(self.best), "char": self.char_key,
@@ -1003,11 +1097,26 @@ class World:
         st["difficulty"] = self.difficulty_key
         m = self._diff_mult()
         bonus = st["cycle"]
-        mult = {"hp": m + 0.25 * bonus,
-                "speed": 1.0 + (m - 1.0) / 2.0 + 0.05 * bonus,
-                "count": 1.0 + (m - 1.0) * 0.4 + 0.1 * bonus,
-                "proj": m,
-                "money": m}
+        cv = self.curve.get(st["difficulty"])
+        if cv:
+            # v2.0: explicit easy / normal curve + stage 1-3 warm-up (hard+ have no entry: formula below unchanged)
+            wu = cv.get("warmup") or {}
+            cw = cv.get("count_warmup") or {}
+            mult = {"hp": (float(cv["hp"]) + 0.25 * bonus) * float(wu.get(n, 1.0)),
+                    "speed": (float(cv["speed"]) + 0.05 * bonus) * float(wu.get(n, 1.0)),
+                    "count": (float(cv["count"]) + 0.1 * bonus) * float(cw.get(n, 1.0)),
+                    "proj": float(cv["proj"]),
+                    "money": float(cv["money"])}
+        else:
+            mult = {"hp": m + 0.25 * bonus,
+                    "speed": 1.0 + (m - 1.0) / 2.0 + 0.05 * bonus,
+                    "count": 1.0 + (m - 1.0) * 0.4 + 0.1 * bonus,
+                    "proj": m,
+                    "money": m}
+        # per-difficulty late-game growth / enemy speed cap, resolved now (difficulty may change between builds)
+        st["hp_per_stage"] = float((cv or {}).get("hp_per_stage", self.progression["hp_per_stage"]))
+        st["boss_hp_per_stage"] = float((cv or {}).get("boss_hp_per_stage", self.progression["boss_hp_per_stage"]))
+        st["speed_cap"] = float((cv or {}).get("speed_cap", ENEMY_SPEED_STAGE_CAP))
         monsters = [k for k in (d.get("monsters") or []) if k in self.ranks]
         grunts = list(d.get("grunts") or ["manager"])
         elites = list(d.get("elites") or [])
@@ -1099,7 +1208,8 @@ class World:
                     self.upgrades[k] = max(0, int(v)) if mx <= 0 else max(0, min(int(v), mx))
             for k, v in self.saved_equip.items():
                 if k in self.equip:
-                    self.equip[k] = max(0, int(v))
+                    mx = self._equip_max(k)
+                    self.equip[k] = max(0, int(v)) if mx <= 0 else max(0, min(int(v), mx))   # v2.0: clamp to "max"
         self._start_stage(stage_no)
 
     def _start_stage(self, n: int):
@@ -1129,6 +1239,8 @@ class World:
         self.word_next = self.rng.uniform(4.0, 9.0)
         self.slow_t = 0.0
         self.town = None
+        self.perk_used = {}                     # v2.0: per-stage perk charges (second_wind, pit_save)
+        self._refresh_perks()
         self._reset_player(invincible=1.5)     # enemies close in x2 as fast since v1.8
         self._bal_start()
         if self.stage["waves"] > 0:
@@ -1137,7 +1249,13 @@ class World:
         else:
             self.phase = "boss"
             self.boss_gap = BOSS_GAP
-        self._set_banner(self._stage_display(), 1.5)
+        banner = self._stage_display()
+        chips = self._hud_perks()
+        shown = tuple((d["key"], d["rank"]) for d in chips)
+        if chips and shown != self._perks_shown:  # announce the build once per change
+            banner += " · 퍽: " + " · ".join(d["label"] for d in chips)
+        self._perks_shown = shown
+        self._set_banner(banner, 1.5)
         self._set_state("play")
 
     def _reset_player(self, invincible: float = 2.0):
@@ -1159,6 +1277,11 @@ class World:
         p.shoot_t = 0.0
         p.jump_buf = 0.0
         p.drop_t = 0.0
+        p.air_jumps = int(self._perk("double_jump"))
+        p.regen_t = 0.0
+        p.haste_t = 0.0
+        p.air_top = p.y
+        self._last_ground_x = p.x
         p.hold_frame = None
         p.set_anim("idle")
 
@@ -1247,9 +1370,22 @@ class World:
         self._set_banner(f"중간 보스 · {title}", MID_BANNER_T)
 
     def _enemy_speed_mult(self) -> float:
-        """x2 base, +10 % compound per stage, growth capped (stage 1: 2.0, 5: 2.93, 8: 3.9, 13+: 6.0)."""
+        """x2 base, +10 % compound per stage, growth capped (hard+: stage 1: 2.0, 5: 2.93, 8: 3.9, 13+: 6.0;
+        v2.0 easy / normal cap at DIFF_CURVE speed_cap 2.2 / 2.6, resolved into the stage at build time)."""
         grow = (1.0 + ENEMY_SPEED_PER_STAGE) ** max(0, self.stage_no - 1)
-        return ENEMY_SPEED_BASE * min(ENEMY_SPEED_STAGE_CAP, grow)
+        cap = float(self.stage.get("speed_cap", ENEMY_SPEED_STAGE_CAP)) if self.stage else ENEMY_SPEED_STAGE_CAP
+        return ENEMY_SPEED_BASE * min(cap, grow)
+
+    def _hp_per_stage(self, boss: bool = False) -> float:
+        key = "boss_hp_per_stage" if boss else "hp_per_stage"
+        return float(self.stage.get(key, self.progression[key])) if self.stage else float(self.progression[key])
+
+    def _equip_max(self, slot: str) -> int:
+        """v2.0: legacy slot level cap (config "equipment"[slot]["max"], 0 = unlimited)."""
+        try:
+            return int(self.equipment.get(slot, {}).get("max", DEFAULT_EQUIP_MAX))
+        except (TypeError, ValueError):
+            return DEFAULT_EQUIP_MAX
 
     def _make_enemy(self, rank_key: str, x: float, boss: bool = False, title: str | None = None) -> Enemy:
         r = self._rank(rank_key)
@@ -1268,7 +1404,7 @@ class World:
             e.pattern = r.get("pattern", "mid")
             e.scale = int(r.get("boss_scale", 4))
             base_hp = r.get("boss_hp", max(15, int(r.get("hp", 1)) * 10))
-            grow = 1.0 + float(self.progression["boss_hp_per_stage"]) * max(0, self.stage_no - 1)
+            grow = 1.0 + self._hp_per_stage(boss=True) * max(0, self.stage_no - 1)
             e.hp_max = max(1, int(round(base_hp * mult["hp"] * grow)))
             e.speed = float(r.get("boss_speed", r.get("speed", 100))) * mult["speed"] * self._enemy_speed_mult()
             e.fire_rate = float(r.get("fire_rate", 0.8))
@@ -1285,8 +1421,8 @@ class World:
             if e.kind not in ("grunt", "elite"):
                 e.kind = "elite"
             e.scale = int(r.get("scale", 2))
-            # 스테이지가 오를수록 잡병도 한 방에 죽지 않는다 (stage 1: x1.0, 3: x1.7, 6: x2.75 ...)
-            grow = 1.0 + float(self.progression["hp_per_stage"]) * max(0, self.stage_no - 1)
+            # 스테이지가 오를수록 잡병도 한 방에 죽지 않는다 (hard+ 0.35/stage: 3: x1.7, 6: x2.75; easy .22 / normal .28)
+            grow = 1.0 + self._hp_per_stage() * max(0, self.stage_no - 1)
             e.hp_max = max(1, int(round(int(r.get("hp", 1)) * mult["hp"] * grow)))
             e.speed = float(r.get("speed", 60)) * mult["speed"] * self._enemy_speed_mult()
             e.move_t = self.rng.uniform(*MOVE_T["walk"])
@@ -1356,6 +1492,14 @@ class World:
                 self._after_death()
             return
         p.inv_t = max(0.0, p.inv_t - dt)
+        p.haste_t = max(0.0, p.haste_t - dt)
+        iv = self._perk("shield_regen")         # v2.0: +1 shield every N s without a hit (reset in _hit_player)
+        if iv and p.shield < self._shield_max():
+            p.regen_t += dt
+            if p.regen_t >= iv:
+                p.regen_t = 0.0
+                p.shield += 1
+                self._effect("text", p.x, p.y - PLAYER_H - 12, text=f"실드 {p.shield}")
         p.drop_t = max(0.0, p.drop_t - dt)
         p.jump_buf = max(0.0, p.jump_buf - dt)
         p.shoot_t = max(0.0, p.shoot_t - dt)
@@ -1373,6 +1517,7 @@ class World:
         p.vx = 0.0 if p.crouch else move * WALK_SPEED * self._speed_mult(c)
         if p.jump_buf > 0 and p.on_ground:
             p.jump_buf = 0.0
+            p.air_top = p.y
             if p.crouch and p.on_platform:
                 p.drop_t = 0.3          # drop through platform
                 p.on_ground = False
@@ -1381,6 +1526,12 @@ class World:
                 p.vy = -JUMP_VEL * self._jump_mult(c)
                 p.on_ground = False
                 p.crouch = False
+        elif p.jump_buf > 0 and not p.on_ground and p.drop_t <= 0 and p.air_jumps > 0:
+            p.jump_buf = 0.0            # v2.0 double_jump perk: air jump at 85 % height (recharged on landing)
+            p.air_jumps -= 1
+            p.vy = -JUMP_VEL * self._jump_mult(c) * 0.85
+            p.crouch = False
+            self._effect("dust", p.x, p.y)
         p.vy += GRAVITY * dt
         prev_y = p.y
         p.x += p.vx * dt
@@ -1402,11 +1553,39 @@ class World:
         if landed:
             p.vy = 0.0
             p.on_ground = True
+            p.air_jumps = int(self._perk("double_jump"))
+            d = self._perk("stomp")         # v2.0 stomp perk: a >= 40 px drop sends a ground wave both ways
+            if d and p.y - p.air_top >= 40 and len(self.bullets) + 2 <= MAX_BULLETS:
+                pair = [Bullet(p.x + s * 18, p.y - 6, 26, 12, s * 380.0, 0.0, "player", dmg=int(d), pierce=True,
+                               kind="wave", ttl=(0.6 if d >= 2 else 0.35), mdmg=0, element=self.element_key)
+                        for s in (1, -1)]
+                pair[1].hit = pair[0].hit   # one hit set: an enemy straddling the player takes d once, not 2d
+                self.bullets.extend(pair)
+                self._effect("dust", p.x, p.y)
+            p.air_top = p.y
+            if not p.on_platform:
+                self._last_ground_x = p.x   # a floor landing is never over a pit (pit_save return point)
         else:
             p.on_ground = False
+            p.air_top = min(p.air_top, p.y)
             if p.crouch:
                 p.crouch = False
         if p.y > self.height + 80:
+            t = self._perk("pit_save")      # v2.0: back to the last floor spot instead of a lost life
+            n = int(self.perk_used.get("pit_save", 0))
+            if t and (t >= 2 or n == 0):
+                if t >= 2 and n >= 1 and p.shield > 0:
+                    p.shield -= 1           # unique: unlimited, the 2nd+ rescue costs a shield charge if any
+                self.perk_used["pit_save"] = n + 1
+                p.x, p.y = self._pit_edge(self._last_ground_x), float(self.ground_y)   # never inside a pit
+                p.vx = p.vy = 0.0
+                p.on_ground = True
+                p.inv_t = 1.0
+                p.air_top = p.y
+                p.air_jumps = int(self._perk("double_jump"))
+                self._effect("dust", p.x, p.y)
+                self._effect("text", p.x, p.y - PLAYER_H - 12, text="구조!")
+                return
             self._kill_player(force=True)   # fell into a pit
             return
         # weapon timer
@@ -1443,7 +1622,9 @@ class World:
         dmg = self._phys_dmg(c)
         mdmg = self._magic_dmg(c)
         el = self.element_key
-        pierce = bool(c.get("pierce", False))
+        pv = self._perk("pierce")               # v2.0 perk: rare = +1 enemy, unique (99) = full pierce
+        pierce = bool(c.get("pierce", False)) or pv >= 99
+        extra = 1 if pv == 1 else 0
         rate = FIRE_RATE * self._fire_rate_mult(c)
         spd = self._bullet_speed(c)
         w = p.weapon
@@ -1468,10 +1649,10 @@ class World:
                     break
                 self.bullets.append(Bullet(gx, gun_y, 8, 4, p.facing * spd * math.cos(ang),
                                            spd * math.sin(ang), "player", dmg=dmg, pierce=pierce,
-                                           mdmg=mdmg, element=el))
+                                           mdmg=mdmg, element=el, extra=extra))
         else:
             self.bullets.append(Bullet(gx, gun_y, 8, 4, p.facing * spd, 0.0, "player",
-                                       dmg=dmg, pierce=pierce, mdmg=mdmg, element=el))
+                                       dmg=dmg, pierce=pierce, mdmg=mdmg, element=el, extra=extra))
             if w == "rapid":
                 rate *= 2.0
         p.fire_cd = 1.0 / max(0.5, rate)
@@ -1484,8 +1665,8 @@ class World:
         return str(m.get("style", "hip"))
 
     def _melee_targets(self, p: Player, melee: dict) -> list:
-        reach = float(melee.get("range", 45))
-        both = bool(melee.get("both_sides", False))
+        reach = float(melee.get("range", 45)) * self._perk_mult("melee_reach")     # v2.0 perk x1.3 / x1.6
+        both = bool(melee.get("both_sides", False)) or self._perk("melee_reach") >= 1.6   # unique: behind too
         head = p.y - PLAYER_H - 6
         hits = []
         for e in self.enemies:
@@ -1522,19 +1703,21 @@ class World:
         for e in targets:
             d = 1 if e.x >= p.x else -1
             e.x += d * knock * (MELEE_KNOCK_BOSS if e.boss else 1.0)
-            self._strike(e, dmg, mdmg, self.element_key)
+            self._strike(e, self._boss_dmg(e, self._crit(dmg, e.x, e.y - e.h)), mdmg, self.element_key)
             self._bal_add("melee_dmg", dmg + mdmg)
+        killed = any(not e.alive for e in targets)   # v2.0 kill_haste: a killing swing has no cooldown
         if targets:
             self._effect("text", p.x + p.facing * 20, p.y - PLAYER_H - 8, text=str(melee.get("text", "퍽!")))
-        self._effect("slash", p.x + p.facing * float(melee.get("range", 45)) * 0.5, p.y - PLAYER_H * 0.55, text=style)
-        if style == "hammer" and melee.get("wave", True) and final:
+        self._effect("slash", p.x + p.facing * float(melee.get("range", 45)) * self._perk_mult("melee_reach") * 0.5,
+                     p.y - PLAYER_H * 0.55, text=style)
+        if style == "hammer" and melee.get("wave", True) and final and len(self.bullets) < MAX_BULLETS:
             self.bullets.append(Bullet(p.x + p.facing * 18, self.ground_y - 6, 26, 12, p.facing * 380.0, 0.0,
                                        "player", dmg=max(1, dmg // 2), pierce=True, kind="wave", ttl=0.7,
                                        mdmg=0, element=self.element_key))
         cd = float(melee.get("cooldown", MELEE_CD))
         if style == "knife":
             cd = float(melee.get("hit_gap", 0.15)) if not final else cd
-        p.fire_cd = cd
+        p.fire_cd = 0.0 if (killed and self._perk("kill_haste")) else cd
         p.shoot_t = 0.2
         p.melee_t = 0.25 if style != "hammer" else 0.4
 
@@ -1550,7 +1733,7 @@ class World:
         if kind not in ZONE_KINDS:
             kind = "storm"
         w = float(storm.get("width", 160))
-        dur = float(storm.get("duration", 3.0))
+        dur = float(storm.get("duration", 3.0)) * self._perk_mult("ult_time")     # v2.0 perk x1.5 / x2.0
         centered = bool(storm.get("centered", kind == "quake"))
         zx = p.x if centered else p.x + p.facing * (w / 2 + 10)
         self.zones.append({"kind": kind, "x": zx, "w": w, "t": dur, "ttl": dur,
@@ -1558,7 +1741,8 @@ class World:
                            "dmg": max(1, int(storm.get("damage", 1))) + self.upgrades.get("str", 0) // 3,
                            "mdmg": self._magic_dmg(self.char), "element": self.element_key,
                            "knock": float(storm.get("knockback", 0.0))})
-        p.skill_cd = float(storm.get("cooldown", 8.0))
+        cd = float(storm.get("cooldown", 8.0)) * self._perk_mult("ult_haste")      # v2.0 perk x0.75 / x0.6
+        p.skill_cd = max(cd, dur + 1.0)         # uptime floor: a zone can never be permanently up
         p.shoot_t = 0.3
         p.ult_t = ULT_T
         self._effect("text", p.x, p.y - PLAYER_H - 12, text=str(storm.get("label", "서류 스톰")))
@@ -1582,7 +1766,7 @@ class World:
                 knock = float(z.get("knock", 0.0))
                 for e in self.enemies:
                     if e.alive and _overlap(e.box(), box):
-                        self._strike(e, z["dmg"], z.get("mdmg", 0), z.get("element"))
+                        self._strike(e, self._boss_dmg(e, z["dmg"]), z.get("mdmg", 0), z.get("element"))
                         if knock > 0:
                             e.x += (1 if e.x >= z["x"] else -1) * knock * (MELEE_KNOCK_BOSS if e.boss else 1.0)
             alive.append(z)
@@ -1635,7 +1819,7 @@ class World:
     # ------------------------------------------------------------ town (v1.9: every 5th stage)
     def _open_town(self):
         if self.shop_stock_stage != self.stage_no and hasattr(economy, "make_shop_stock"):
-            self.shop_stock = list(economy.make_shop_stock(self.rng, self.stage_no, 10))
+            self.shop_stock = list(economy.make_shop_stock(self.rng, self.stage_no, 10, exclude=self._perk_exclusions()))
             self.shop_stock_stage = self.stage_no
         self.shop_index = 0
         self.shop_msg = ""
@@ -1688,6 +1872,8 @@ class World:
             self._town_alt(tab, rows[idx])
         elif key in ("confirm", "fire") and self.state_t >= CONFIRM_GUARD:
             self._town_confirm(tab, rows[idx])
+        if self.town is None:                   # "다음" closed the town (from any tab): nothing left to clamp
+            return
         if tab == "store" and t["index"]["store"] >= len(self._town_list("store")):
             t["index"]["store"] = max(0, len(self._town_list("store")) - 1)
 
@@ -1720,45 +1906,97 @@ class World:
                 return
             self.money -= price
             self._bal_add("spent", price)
-            res = economy.open_box(self.rng, self.stage_no)
+            res = economy.open_box(self.rng, self.stage_no, exclude=self._perk_exclusions())
             self._effect("boxopen", self.width / 2, self.ground_y - 60)
             if res["kind"] == "equip" and res.get("equip"):
                 eq = res["equip"]
                 ok = self.warehouse.add(eq)
                 t["msg"] = f"랜덤박스: [{economy.RARITY_LABEL[eq['rarity']]}] {eq['name']}" + ("" if ok else " (창고 가득, 자동 판매)")
                 if not ok:
-                    self.money += int(economy.sell_price(eq, self.stage_no))
+                    gain = int(economy.sell_price(eq, self.stage_no))
+                    self.money += gain
+                    self._bal_add("money", gain)
             elif res["kind"] == "item" and res.get("item"):
                 ok = self._pickup(res["item"])
                 t["msg"] = f"랜덤박스: {ITEM_LABEL.get(res['item'], res['item'])}" + ("" if ok else " (인벤 가득)")
             elif res["kind"] == "money":
                 self.money += int(res.get("money", 0))
+                self._bal_add("money", int(res.get("money", 0)))
                 t["msg"] = f"랜덤박스: ₩{int(res.get('money', 0)):,}!"
             else:
                 t["msg"] = f"랜덤박스: {res.get('text', '꽝')}"
         elif kind == "item":
             eq = self.warehouse.equip(arg)
             t["msg"] = f"장착: {eq['name']}" if eq else "장착 실패"
+            self._refresh_perks()
             self.player.shield = min(self.player.shield, self._shield_max())
         elif kind == "slot":
             if self.warehouse.equipped.get(arg) is None:
                 t["msg"] = "빈 슬롯"
             elif self.warehouse.unequip(arg):
                 t["msg"] = f"{economy.SLOT_LABEL[arg]} 해제"
+                self._refresh_perks()
             else:
                 t["msg"] = "창고가 가득 찼습니다"
         elif kind == "game":
             self._town_gamble(arg)
 
+    # ------------------------------------------------------------ perks (v2.0: rare+ gear convenience skills)
+    def _perk_exclusions(self) -> tuple:
+        """Keys the current character cannot use: no "storm" -> ult_time / ult_haste, config pierce -> pierce.
+        Passed as exclude= to every gear roll; gear that still carries one is masked by _perk_ok / _perk."""
+        c = self.char
+        ex = [] if c.get("storm") else ["ult_time", "ult_haste"]
+        if c.get("pierce"):
+            ex.append("pierce")
+        return tuple(ex)
+
+    def _perk_ok(self, key: str) -> bool:
+        return key not in self._perk_ex
+
+    def _refresh_perks(self) -> None:
+        """Cache Warehouse.perks() ({key: rank}, MAX over duplicates — never added) and the character mask.
+        Called after the warehouse loads, in _start_stage and after every town equip / unequip / sell and gear
+        pickup — never per frame."""
+        self.perks = dict(self.warehouse.perks()) if hasattr(self.warehouse, "perks") else {}
+        self._perk_ex = set(self._perk_exclusions())
+
+    def _perk(self, key: str):
+        """Magnitude of an equipped perk (economy.PERKS value at its rank); 0 when absent or character-mismatched."""
+        if key not in self.perks or key in self._perk_ex or not hasattr(economy, "perk_value"):
+            return 0
+        return economy.perk_value(self.perks, key, 0)
+
+    def _perk_mult(self, key: str) -> float:
+        return float(self._perk(key) or 1.0)
+
     def _town_alt(self, tab: str, row: tuple):
-        """C key: sell (warehouse list) / change target, stake or bet (gambling)."""
+        """C key: sell (warehouse list) / 강화 = deterministic +1 (equipped row) / change target, stake or bet."""
         t = self.town
         kind, arg = row
         if tab == "store" and kind == "item":
             eq = self.warehouse.remove(arg)
             gain = int(economy.sell_price(eq, self.stage_no))
             self.money += gain
+            self._bal_add("money", gain)
             t["msg"] = f"판매: {eq['name']} +₩{gain:,}"
+            self._refresh_perks()
+        elif tab == "store" and kind == "slot":
+            eq = self.warehouse.equipped.get(arg)
+            if eq is None:
+                t["msg"] = "빈 슬롯"
+            elif not hasattr(economy, "enhance"):
+                t["msg"] = "강화 불가"
+            else:
+                perks = self.perks
+                cost = int(economy.enhance_cost(eq, perks))
+                new, self.money, text, ok = economy.enhance(eq, self.money, perks)
+                if ok:
+                    self.warehouse.equipped[arg] = new
+                    self._bal_add("spent", cost)
+                    self._effect("boxopen", self.width / 2, self.ground_y - 60)
+                    self.player.shield = min(self.player.shield, self._shield_max())
+                t["msg"] = f"{eq['name']}: {text}"
         elif tab == "gamble" and kind == "game":
             if arg == 0:
                 t["target"] = (t["target"] + 1) % len(economy.SLOTS)
@@ -1781,8 +2019,11 @@ class World:
             if sl is None:
                 t["msg"] = "장착한 장비가 없습니다"
                 return
+            before = self.money
             eq, self.money, text = economy.gamble_upgrade(self.rng, self.warehouse.equipped[sl], self.money)
             self.warehouse.equipped[sl] = eq
+            if before > self.money:
+                self._bal_add("spent", before - self.money)
             t["msg"] = f"{eq['name']}: {text}"
         elif game == 1:
             stake = max(100, int(self.money * DOUBLE_STAKES[t["stake_i"]]))
@@ -1790,9 +2031,11 @@ class World:
                 t["msg"] = "돈이 부족합니다"
                 return
             self.money -= stake
+            self._bal_add("spent", stake)
             ok, payout = economy.gamble_double(self.rng, stake, t["streak"])
             if ok:
                 self.money += payout
+                self._bal_add("money", payout)
                 t["streak"] += 1
                 t["msg"] = f"성공! ₩{stake:,} → ₩{payout:,} (연승 {t['streak']})"
             else:
@@ -1804,13 +2047,17 @@ class World:
                 t["msg"] = "돈이 부족합니다"
                 return
             self.money -= bet
-            res = economy.gamble_slots(self.rng, bet, self.stage_no)
+            self._bal_add("spent", bet)
+            res = economy.gamble_slots(self.rng, bet, self.stage_no, exclude=self._perk_exclusions())
             self.money += int(res.get("payout", 0))
+            self._bal_add("money", int(res.get("payout", 0)))
             t["reels"] = list(res.get("reels") or [])
             prize = res.get("prize")
             if prize and prize.get("kind") == "equip" and prize.get("equip"):
                 if not self.warehouse.add(prize["equip"]):
-                    self.money += int(economy.sell_price(prize["equip"], self.stage_no))
+                    gain = int(economy.sell_price(prize["equip"], self.stage_no))
+                    self.money += gain
+                    self._bal_add("money", gain)
             elif prize and prize.get("kind") == "item" and prize.get("item"):
                 self._pickup(prize["item"])
             t["msg"] = str(res.get("text", ""))
@@ -1830,17 +2077,43 @@ class World:
             afford.append(self.money >= price)
         prices = [it["price"] if it.get("kind") == "box" else int(economy.buy_price(it, self.stage_no)) for it in stock]
         tgt = self._gamble_target_slot()
+        # v2.0 store view: 강화 cost / preview, slot + perk labels so the renderer needs no economy import
+        equipped = self.warehouse.equipped
+        perks = self.perks
+        max_lv = int(getattr(economy, "MAX_LEVEL", 20))
+        perk_table = getattr(economy, "PERKS", {}) or {}
+        _fx = economy.equip_effect if hasattr(economy, "equip_effect") else (lambda e: None)
+        _ecost = economy.enhance_cost if hasattr(economy, "enhance_cost") else (lambda e, p=None: 0)
+        enhance_cost = {k: (int(_ecost(v, perks)) if v else 0) for k, v in equipped.items()}
         return {"tab": tab, "tabs": [TOWN_TAB_LABEL[k] for k in TOWN_TABS], "tab_index": t["tab"] % len(TOWN_TABS),
                 "index": t["index"][tab] % len(rows), "count": len(rows), "msg": t["msg"], "stage": self.stage_no,
                 "hint": TOWN_HINT[tab], "money": self.money,
                 "stat": {"items": self._shop_view()["items"]},
                 "shop": {"stock": stock, "afford": afford, "prices": prices},
                 "store": {"items": [dict(e) for e in self.warehouse.items],
-                          "equipped": {k: (dict(v) if v else None) for k, v in self.warehouse.equipped.items()},
+                          "equipped": {k: (dict(v) if v else None) for k, v in equipped.items()},
                           "mode": t["store_mode"], "cap": self.warehouse.CAP,
                           "sell": [int(economy.sell_price(e, self.stage_no)) for e in self.warehouse.items],
                           "upgrade_cost": {k: (int(economy.upgrade_cost(v)) if v else 0)
-                                           for k, v in self.warehouse.equipped.items()}},
+                                           for k, v in equipped.items()},
+                          "enhance_cost": enhance_cost,
+                          "can_enhance": {k: bool(v) and int(v.get("level", 0)) < max_lv
+                                          and self.money >= enhance_cost[k] for k, v in equipped.items()},
+                          "max_level": max_lv,
+                          "slot_labels": dict(getattr(economy, "SLOT_LABEL", {})),
+                          "slot_order": list(economy.SLOTS),
+                          "effect": {k: (_fx(v) if v else None) for k, v in equipped.items()},
+                          "effect_next": {k: (_fx(dict(v, level=int(v.get("level", 0)) + 1))
+                                              if v and int(v.get("level", 0)) < max_lv else None)
+                                          for k, v in equipped.items()},
+                          "items_slot": [e.get("slot") for e in self.warehouse.items],
+                          "total": self._equip_fx(),
+                          "perks": perks,
+                          "perk_labels": {k: str(v.get("label", k)) for k, v in perk_table.items()},
+                          "perk_desc": {k: str(v.get("desc", "")) for k, v in perk_table.items()},
+                          "perk_ui": {k: (dict(v["ui"]) if isinstance(v.get("ui"), dict) else {})
+                                      for k, v in perk_table.items()},        # {perk: {rarity: text}}
+                          "perk_excluded": sorted(self._perk_ex)},             # greyed ' (미적용)' for this character
                 "gamble": {"games": list(GAMBLE_GAMES), "game": t["index"]["gamble"] % len(rows),
                            "stake": max(100, int(self.money * DOUBLE_STAKES[t["stake_i"]])),
                            "stake_pct": int(DOUBLE_STAKES[t["stake_i"]] * 100), "streak": t["streak"],
@@ -1850,28 +2123,67 @@ class World:
                            "target_cost": (int(economy.upgrade_cost(self.warehouse.equipped[tgt]) * 1.5) if tgt else 0)}}
 
     def _drop_item(self, e: Enemy):
-        """Kill drops: a coin every time (v1.9 money), plus the usual item roll; bosses drop equipment."""
+        """Kill drops: money every time (v1.9), plus the usual item roll; bosses drop equipment.
+        v2.0: the final boss pays directly (the stage clears before a coin could be walked over); everything
+        else leaves a coin pile on the floor (_spawn_coin). MAX_ITEMS counts non-coin items only."""
         x = min(self.width - 20, max(20, e.x))
         mkind = "boss" if (e.boss and not e.mid) else "mid" if e.boss else e.kind
         money = economy.money_drop(self.rng, mkind, self.stage_no, self.stage["mult"].get("money", 1.0),
                                    float(self._equip_fx().get("money", 0.0)))
         if money > 0:
-            self.items.append(Item(x + self.rng.uniform(-14, 14), e.y - 10, "coin", value=money))
+            if mkind == "boss":
+                p = self.player
+                self.money += money
+                self._bal_add("money", money)
+                self._effect("coin", p.x, p.y - PLAYER_H - 6, text=f"+₩{money:,}")
+            else:
+                self._spawn_coin(x + self.rng.uniform(-14, 14), e.y - 10, money)
+        n_items = sum(1 for it in self.items if it.kind != "coin")
         if e.boss:
             if not e.mid:
                 self._boss_gear_drop()
-            if len(self.items) < MAX_ITEMS:
+            if n_items < MAX_ITEMS:
                 kind = "life" if self.lives < self.lives_max + 2 else self.rng.choice(("laser", "homing", "spread", "bomb"))
                 self.items.append(Item(x, e.y - 10, kind))
             return
-        if len(self.items) >= MAX_ITEMS:
+        if n_items >= MAX_ITEMS:
             return
-        chance = float(self.progression["drop_elite" if e.kind == "elite" else "drop_grunt"])
+        chance = min(0.9, float(self.progression["drop_elite" if e.kind == "elite" else "drop_grunt"])
+                     * self._perk_mult("loot_luck"))      # v2.0 perk x1.5 / x2.0, capped at 90 %
         if self.rng.random() >= chance:
             return
         kinds = list(ITEM_DROP_WEIGHT)
         kind = self.rng.choices(kinds, [ITEM_DROP_WEIGHT[k] for k in kinds])[0]
         self.items.append(Item(x, e.y - 10, kind))
+
+    def _spawn_coin(self, x: float, y: float, value: int):
+        """v2.0: money stays where the enemy died. A drop within COIN_MERGE_R of an on-ground pile merges into it
+        (TTL refreshed); at MAX_COINS piles the nearest one absorbs it; otherwise a new coin scatters sideways
+        while airborne and settles on the floor (never inside a pit: _update_items slides it to the edge)."""
+        coins = [it for it in self.items if it.kind == "coin"]
+        near = [c for c in coins if c.on_ground and abs(c.x - x) <= COIN_MERGE_R]
+        if not near and len(coins) >= MAX_COINS:
+            near = [min(coins, key=lambda c: abs(c.x - x))]
+        if near:
+            c = near[0]
+            c.value += int(value)
+            c.t = COIN_TTL
+            return
+        it = Item(x, y, "coin", value=value)
+        it.vx = self.rng.uniform(-70.0, 70.0)
+        self.items.append(it)
+
+    def _pit_edge(self, x: float) -> float:
+        """x moved to the nearest floor just outside the pit containing it (10 px margin); x itself if none."""
+        for (px, pw) in self.pits:
+            if px < x < px + pw:
+                return px - 10.0 if (x - px) < (px + pw - x) else px + pw + 10.0
+        return x
+
+    @staticmethod
+    def _coin_reach(it: "Item", p: "Player") -> bool:
+        """Coins are picked up within COIN_PICK_R horizontally, at the player's height band (not from a platform)."""
+        return abs(it.x - p.x) <= COIN_PICK_R and (p.y - PLAYER_H - 6) <= it.y <= (p.y + 6)
 
     def _boss_gear_drop(self):
         """Department final boss: one piece of equipment straight into the warehouse (sold if it is full)."""
@@ -1879,23 +2191,30 @@ class World:
             return
         rarity = economy.roll_rarity(self.rng, economy.BOSS_RARITY)
         slot = self.rng.choice(economy.SLOTS)
-        eq = economy.make_equipment(self.rng, slot, rarity, level=min(3, self.stage_no // 6), stage=self.stage_no)
+        eq = economy.make_equipment(self.rng, slot, rarity, level=min(3, self.stage_no // 6), stage=self.stage_no,
+                                    exclude=self._perk_exclusions())
         self._gear_to_warehouse(eq, "보스 전리품")
 
     def _gear_to_warehouse(self, eq: dict, why: str):
         p = self.player
         name = str(eq.get("name", "장비"))
         rl = economy.RARITY_LABEL.get(eq.get("rarity"), "") if hasattr(economy, "RARITY_LABEL") else ""
+        table = getattr(economy, "PERKS", {}) or {}
+        for k in (eq.get("perks") or []):       # v2.0: '★코인 자석' per perk so the drop reads at a glance
+            if k in table:
+                name += " ★" + str(table[k].get("label", k))
         if self.warehouse.add(eq):
             msg = f"{why} · [{rl}] {name} → 창고"
         else:
             gain = int(economy.sell_price(eq, self.stage_no)) if hasattr(economy, "sell_price") else 0
             self.money += gain
+            self._bal_add("money", gain)
             msg = f"{why} · 창고 가득 → {name} 자동 판매 ₩{gain:,}"
         self._equip_msg = msg
         self._set_banner(msg, EQUIP_BANNER_T)
         self._effect("text", p.x, p.y - PLAYER_H - 24, text=name)
         self._bal_add("gear", 1)
+        self._refresh_perks()
 
     def _pickup(self, kind: str, value: int = 0) -> bool:
         """Floor item touched. Coins are money at once; everything else goes to an inventory slot (stacks)."""
@@ -1906,7 +2225,7 @@ class World:
             self._effect("coin", p.x, p.y - PLAYER_H - 6, text=f"+₩{int(value):,}")
             return True
         for i, slot in enumerate(self.inventory):
-            if slot and slot["kind"] == kind and slot["count"] < INV_STACK:
+            if slot and slot["kind"] == kind and slot["count"] < INV_STACK + int(self._perk("inv_stack")):
                 slot["count"] += 1
                 self._flash_slot(i)
                 return True
@@ -1941,27 +2260,28 @@ class World:
 
     def _use_item(self, kind: str):
         p = self.player
+        m = self._perk_mult("item_time")        # v2.0 perk: timed items / ammo / allies last x1.5 / x2.0
         if kind == "life":
             self.lives = min(self.lives_max + 2, self.lives + 1)
         elif kind == "homing":
-            p.weapon, p.ammo, p.weapon_t = "homing", HOMING_AMMO, 0.0
+            p.weapon, p.ammo, p.weapon_t = "homing", int(HOMING_AMMO * m), 0.0
         elif kind in WEAPON_TIME:
-            p.weapon, p.weapon_t, p.ammo = kind, WEAPON_TIME.get(kind, 10.0), 0
+            p.weapon, p.weapon_t, p.ammo = kind, WEAPON_TIME.get(kind, 10.0) * m, 0
         elif kind == "bomb":
             self._bomb()
         elif kind == "coffee":
-            self.slow_t = COFFEE_T
+            self.slow_t = COFFEE_T * m
         elif kind == "decoy":
             self.allies = [a for a in self.allies if a.kind != "decoy"]
-            a = Ally("decoy", p.x, p.y, DECOY_T, palette=self.char_key)
+            a = Ally("decoy", p.x, p.y, DECOY_T * m, palette=self.char_key)
             a.facing = p.facing
             self.allies.append(a)
         elif kind == "drone":
             self.allies = [a for a in self.allies if a.kind != "drone"]
-            self.allies.append(Ally("drone", p.x, p.y - PLAYER_H - 24, DRONE_T))
+            self.allies.append(Ally("drone", p.x, p.y - PLAYER_H - 24, DRONE_T * m))
         elif kind == "dog":
             self.allies = [a for a in self.allies if a.kind != "dog"]
-            a = Ally("dog", p.x - p.facing * 24, self.ground_y, DOG_T)
+            a = Ally("dog", p.x - p.facing * 24, self.ground_y, DOG_T * m)
             a.facing = p.facing
             self.allies.append(a)
         self._effect("text", p.x, p.y - PLAYER_H - 12, text=ITEM_LABEL.get(kind, kind))
@@ -2004,7 +2324,7 @@ class World:
                         a.facing = 1 if tgt.x >= a.x else -1
                         gy = a.y - PLAYER_H * 0.62
                         self.bullets.append(Bullet(a.x + a.facing * 10, gy, 8, 4, a.facing * BULLET_SPEED, 0.0,
-                                                   "player", dmg=self._phys_dmg(self.char), mdmg=0))
+                                                   "player", dmg=self._phys_dmg(self.char), mdmg=0, ally=True))
                         a.fire_cd = DECOY_FIRE
                         a.set_anim("shoot")
                         a.anim_t = 0.0
@@ -2016,7 +2336,7 @@ class World:
                 a.facing = p.facing
                 if a.fire_cd <= 0 and not p.dead and self._nearest_enemy(a.x) is not None:
                     self.bullets.append(Bullet(a.x, a.y, 8, 4, a.facing * MISSILE_SPEED * 0.8, 0.0, "player",
-                                               dmg=1, kind="missile", ttl=4.0))
+                                               dmg=1, kind="missile", ttl=4.0, ally=True))
                     a.fire_cd = DRONE_FIRE
             elif a.kind == "dog":
                 tgt = self._nearest_enemy(a.x)
@@ -2117,7 +2437,8 @@ class World:
             table = getattr(economy, "WORD_RARITY", {"normal": 0.4, "rare": 0.4, "unique": 0.2})
             rarity = economy.roll_rarity(self.rng, table)
             eq = economy.make_equipment(self.rng, self.rng.choice(economy.SLOTS), rarity,
-                                        level=min(5, self.stage_no // 5), stage=self.stage_no)
+                                        level=min(5, self.stage_no // 5), stage=self.stage_no,
+                                        exclude=self._perk_exclusions())
             self._gear_to_warehouse(eq, "타자 보너스")
         elif kind == "money":
             gain = economy.money_drop(self.rng, "word", self.stage_no, self.stage["mult"].get("money", 1.0),
@@ -2135,12 +2456,16 @@ class World:
             return
         p = self.player
         pbox = self._player_box()
+        magnet = self._perk("magnet")           # v2.0: coins home only with the rare-gear "magnet" perk
+        #   rare = 160 px radius after COIN_HOME_DELAY; unique (9999) = the whole band at once
         alive = []
-        for it in self.items:
+        for i, it in enumerate(self.items):
             it.t -= dt
             it.age += dt
-            if it.kind == "coin" and it.age >= COIN_HOME_DELAY and not p.dead:
-                dx, dy = p.x - it.x, (p.y - PLAYER_H / 2) - it.y     # coins fly to the player
+            if (it.kind == "coin" and magnet and not p.dead
+                    and it.age >= (0.0 if magnet >= 9999 else COIN_HOME_DELAY)
+                    and (magnet >= 9999 or math.hypot(p.x - it.x, (p.y - PLAYER_H / 2) - it.y) <= magnet)):
+                dx, dy = p.x - it.x, (p.y - PLAYER_H / 2) - it.y     # magnet: coins fly to the player
                 d = math.hypot(dx, dy) or 1.0
                 step = COIN_HOME_SPEED * dt
                 if d <= step:
@@ -2152,14 +2477,28 @@ class World:
             elif not it.on_ground:
                 it.vy += GRAVITY * dt
                 it.y += it.vy * dt
+                if it.vx:
+                    it.x = min(self.width - 10.0, max(10.0, it.x + it.vx * dt))   # coin scatter while airborne
                 if it.y >= self.ground_y:
                     it.y = float(self.ground_y)
                     it.on_ground = True
-                    if self._over_pit(it.x) and it.kind != "coin":
-                        it.t = 0.0      # fell into a pit
+                    it.vx = 0.0
+                    if self._over_pit(it.x):
+                        if it.kind == "coin":
+                            it.x = self._pit_edge(it.x)      # money is never lost in a pit
+                            # piles sliding to the same edge merge: into a kept pile or one not visited yet
+                            # (never into a coin this loop already dropped — that money would vanish)
+                            tgt = next((c for c in alive + self.items[i + 1:] if c.kind == "coin" and c.on_ground
+                                        and abs(c.x - it.x) <= COIN_MERGE_R), None)
+                            if tgt is not None:
+                                tgt.value += it.value
+                                tgt.t = COIN_TTL
+                                continue
+                        else:
+                            it.t = 0.0      # fell into a pit
             if it.t <= 0:
                 continue
-            if not p.dead and _overlap(it.box(), pbox):
+            if not p.dead and (self._coin_reach(it, p) if it.kind == "coin" else _overlap(it.box(), pbox)):
                 if self._pickup(it.kind, it.value):
                     continue
             alive.append(it)
@@ -2740,8 +3079,9 @@ class World:
                         continue
                     if _overlap(sb, e.box()):
                         b.hit.add(e.id)
-                        self._strike(e, b.dmg, b.mdmg, b.element, b.x, b.y)
-                        if not b.pierce:
+                        dmg = b.dmg if b.ally else self._boss_dmg(e, self._crit(b.dmg, b.x, b.y))   # allies unscaled
+                        self._strike(e, dmg, b.mdmg, b.element, b.x, b.y)
+                        if not b.pierce and len(b.hit) > b.extra:   # extra: pierce perk (rare +1)
                             b.dead = True
                             break
             else:
@@ -2809,6 +3149,11 @@ class World:
             pts = int(r.get("score", 100))
         self.score += pts
         self._effect("text", e.x, e.y - e.h - 8, text=f"+{pts}")
+        kh = self._perk("kill_haste")           # v2.0 perk: a kill resets the fire / melee cooldown (+haste)
+        if kh:
+            self.player.fire_cd = min(self.player.fire_cd, 0.0)
+            if kh >= 2:
+                self.player.haste_t = 2.0
         self._drop_item(e)
         if e.boss:
             self.pending.clear()
@@ -2819,15 +3164,26 @@ class World:
             if not e.mid and self.stage.get("kind") == "dept":
                 self._grant_equip()
 
-    def _grant_equip(self) -> str:
-        """A department stage's final boss fell: +1 level on the lowest-level slot (ties: EQUIP_ORDER)."""
-        slot = min(EQUIP_ORDER, key=lambda k: (self.equip.get(k, 0), EQUIP_ORDER.index(k)))
+    def _grant_equip(self) -> str | None:
+        """A department stage's final boss fell: +1 level on the lowest-level slot (ties: EQUIP_ORDER).
+        v2.0: slots at their "max" are skipped; with every slot at max the boss pays LEGACY_CAP_MONEY*stage ₩."""
+        p = self.player
+        open_slots = [k for k in EQUIP_ORDER if self._equip_max(k) <= 0 or self.equip.get(k, 0) < self._equip_max(k)]
+        if not open_slots:
+            gain = LEGACY_CAP_MONEY * max(1, self.stage_no)
+            self.money += gain
+            self._bal_add("money", gain)
+            msg = f"장비 최대 · 보너스 ₩{gain:,}"
+            self._equip_msg = msg
+            self._set_banner(msg, EQUIP_BANNER_T)
+            self._effect("coin", p.x, p.y - PLAYER_H - 24, text=f"+₩{gain:,}")
+            return None
+        slot = min(open_slots, key=lambda k: (self.equip.get(k, 0), EQUIP_ORDER.index(k)))
         self.equip[slot] = self.equip.get(slot, 0) + 1
         label = str(self.equipment[slot].get("label", slot))
         msg = f"장비 획득 · {label} Lv{self.equip[slot]}"
         self._equip_msg = msg
         self._set_banner(msg, EQUIP_BANNER_T)
-        p = self.player
         self._effect("text", p.x, p.y - PLAYER_H - 24, text=f"{label} Lv{self.equip[slot]}")
         if p.shield < self._shield_max() and slot == "hat":
             p.shield += 1                       # a new helmet level comes charged
@@ -2844,9 +3200,30 @@ class World:
             return
         if p.shield > 0:
             p.shield -= 1
-            p.inv_t = SHIELD_INV
+            p.regen_t = 0.0
+            r = self._perk("shield_burst")      # v2.0 perk: the absorbed hit wipes nearby (rare) / all (unique) shots
+            if r:
+                for b in self.bullets:
+                    if b.owner == "enemy" and (r >= 9999 or abs(b.x - p.x) <= r):
+                        b.dead = True
+                if len(self.bullets) < MAX_BULLETS:
+                    self.bullets.append(Bullet(p.x, p.y - PLAYER_H / 2, 0, 0, 0.0, 0.0, "player", dmg=0, kind="blast",
+                                               ttl=BLAST_T, r=min(r, 140.0)))     # dmg 0 = visual only (like _bomb)
+            p.inv_t = 1.0 if r >= 9999 else SHIELD_INV
             self._bal_add("hits_shield", 1)
             self._effect("text", p.x, p.y - PLAYER_H - 12, text=f"실드 {p.shield}")
+            return
+        t = self._perk("second_wind")           # v2.0 perk: survive one lethal hit per stage (pits excluded)
+        if t and not self.perk_used.get("second_wind"):
+            self.perk_used["second_wind"] = True
+            p.inv_t = 3.0 if t >= 2 else 2.0
+            if t >= 2:
+                p.shield = self._shield_max()
+                for b in self.bullets:
+                    if b.owner == "enemy":
+                        b.dead = True
+            self._set_banner("재기!", 1.2)
+            self._bal_add("revives", 1)
             return
         self._bal_add("hits_life", 1)
         self._kill_player()
@@ -2859,7 +3236,8 @@ class World:
         p.death_t = 0.0
         p.vx = p.vy = 0.0
         p.crouch = False
-        p.weapon, p.weapon_t, p.ammo = "normal", 0.0, 0
+        if not self._perk("keep_weapon"):       # v2.0 perk: the special weapon survives a death
+            p.weapon, p.weapon_t, p.ammo = "normal", 0.0, 0
         if self.anim_lens:
             p.hold_frame = max(0, int(self.anim_lens.get("death", 8)) - 1)
         p.set_anim("death")
@@ -2875,19 +3253,21 @@ class World:
             self.bullets.clear()
             self.allies.clear()
             self.words.clear()
+            self.player.weapon, self.player.weapon_t, self.player.ammo = "normal", 0.0, 0   # keep_weapon ends here
             self._bal_flush("game_over")
             self._set_banner("GAME OVER")
             self._set_state("game_over")
             return
-        # restart current wave / boss
+        # restart current wave / boss (v2.0: coin piles on the floor survive the respawn)
         self.enemies.clear()
         self.bullets.clear()
-        self.items.clear()
+        self.items = [it for it in self.items if it.kind == "coin"]
         self.effects.clear()
         self.zones.clear()
         self.warnings.clear()
         self.boss_ref = None
-        self._reset_player(invincible=2.0)
+        self.perk_used = {}                     # v2.0: every attempt gets its per-stage perk charges back
+        self._reset_player(invincible=3.5 if self._perk("keep_weapon") >= 2 else 2.0)
         if self.phase in ("boss", "midboss"):   # restart at the (mid) boss, not the whole stage
             self.boss_gap = BOSS_GAP
             self.pending.clear()
@@ -2948,6 +3328,11 @@ class World:
                     self._stage_clear()
 
     def _stage_clear(self):
+        left = sum(int(it.value) for it in self.items if it.kind == "coin")   # v2.0: floor money is never lost
+        if left > 0:
+            self.money += left
+            self._bal_add("money", left)
+            self.items = [it for it in self.items if it.kind != "coin"]
         self.score += 500 * self.stage_no
         if self.score > self.best:
             self.best = self.score
@@ -2968,6 +3353,8 @@ class World:
                 banner = f"STAGE CLEAR · {self.chars[k]['name']} 해금!"
         if self._equip_msg:                     # keep the equipment pickup visible through the clear screen
             banner += f" · {self._equip_msg}"
+        if left > 0:
+            banner += f" · 바닥 ₩{left:,} 회수"
         self._set_banner(banner)
         self._set_state("stage_clear")
 
@@ -2984,10 +3371,15 @@ class World:
                      "enemy_hp": {}, "ttk": {}, "spawned": 0, "killed": 0, "shots": 0, "hits_shield": 0,
                      "hits_life": 0, "deaths": 0, "money": 0, "spent": 0, "items_used": 0, "words": 0,
                      "typed": 0, "gear": 0, "melee_dmg": 0, "gambles": 0}
+        for k, v in self._bal_carry.items():    # v2.0: town / shop sinks + sources (spent, gambles, money) land here
+            self._bal[k] = self._bal.get(k, 0) + v
+        self._bal_carry = {}
 
     def _bal_add(self, key: str, v: float = 1):
         if self._bal:
             self._bal[key] = self._bal.get(key, 0) + v
+        else:                                   # between stages (town / shop): carried into the next record
+            self._bal_carry[key] = self._bal_carry.get(key, 0) + v
 
     def _bal_enemy(self, e: Enemy, killed: bool):
         b = self._bal
@@ -3015,7 +3407,7 @@ class World:
                "lives_end": self.lives, "money_gained": b["money"], "money_spent": b["spent"],
                "money_end": self.money, "score_gained": self.score - b["score0"], "items_used": b["items_used"],
                "words_done": b["words"], "letters_typed": b["typed"], "gear_drops": b["gear"],
-               "melee_dmg": b["melee_dmg"], "gambles": b["gambles"]}
+               "melee_dmg": b["melee_dmg"], "gambles": b["gambles"], "revives": b.get("revives", 0)}
         self.balance_log.append(rec)
         if len(self.balance_log) > BALANCE_LOG_MAX:
             del self.balance_log[0:len(self.balance_log) - BALANCE_LOG_MAX]
@@ -3023,7 +3415,8 @@ class World:
 
     # ------------------------------------------------------------ effects
     def _effect(self, kind: str, x: float, y: float, text: str | None = None):
-        ttl = {"hit": 0.15, "spark": 0.25, "text": 0.8, "elem": 0.5, "dust": 0.35}.get(kind, 0.2)
+        ttl = {"hit": 0.15, "spark": 0.25, "text": 0.8, "elem": 0.5, "dust": 0.35,
+               "coin": 0.8, "word": 0.8, "boxopen": 0.6, "slash": 0.2}.get(kind, 0.2)   # v2.0: matches renderer FX_TTL
         self.effects.append({"kind": kind, "x": float(x), "y": float(y), "t": ttl, "ttl": ttl, "text": text})
         if len(self.effects) > MAX_EFFECTS:
             del self.effects[0:len(self.effects) - MAX_EFFECTS]
@@ -3051,7 +3444,7 @@ ZONE_KINDS = ("storm", "quake")
 PLAYER_KEYS = {"x", "y", "anim", "frame", "flip", "palette", "scale", "invincible", "visible", "element"}
 ENEMY_KEYS = {"id", "x", "y", "anim", "frame", "flip", "palette", "scale", "label", "hp", "hp_max", "boss",
               "element", "mid", "sprint", "drop", "attack", "slow"}
-BULLET_KEYS = {"x", "y", "w", "h", "owner", "kind", "sprite", "anim", "frame", "flip", "gravity", "r"}
+BULLET_KEYS = {"x", "y", "w", "h", "owner", "kind", "sprite", "anim", "frame", "flip", "gravity", "r", "vx", "vy"}
 BULLET_KINDS = ("normal", "laser", "missile", "proj", "bomb", "blast", "wave")
 ITEM_KEYS = {"x", "y", "kind", "t", "value"}
 EFFECT_KEYS = {"kind", "x", "y", "t", "text"}
@@ -3062,7 +3455,7 @@ HUD_KEYS = {"lives", "score", "best", "stage_no", "stage_name", "difficulty", "b
             "char_locked", "shop", "element", "element_name", "element_names", "element_index", "stats",
             "char_stats", "element_colors", "equip", "equip_labels",
             "money", "difficulty_label", "difficulty_index", "difficulty_locked", "inventory", "inv_flash",
-            "melee_style", "melee_hit", "slow_t", "equip_effect", "equipped", "town"}
+            "melee_style", "melee_hit", "slow_t", "equip_effect", "equipped", "town", "perks", "perk_labels"}
 BRAWLER_ANIMS = {"idle", "run", "attack", "attack2", "hurt", "death", "jump"}
 ALL_KEYS = {"left", "right", "up", "down", "jump", "fire", "pause", "quit", "confirm", "sel_left", "sel_right",
             "skill", "slot1", "slot2", "slot3", "slot4", "slot5", "tab", "char:a", "char:s", "char:d", "char:o"}
@@ -3097,7 +3490,8 @@ def _check_snapshot(s: dict):
             assert b["sprite"] and b["anim"] in ("proj", "proj2")
     for it in s["items"]:
         assert set(it.keys()) == ITEM_KEYS and it["kind"] in ITEM_KINDS
-    assert len(s["items"]) <= MAX_ITEMS
+    assert len(s["items"]) <= MAX_ITEMS + MAX_COINS        # v2.0: coin piles are capped separately
+    assert sum(1 for it in s["items"] if it["kind"] == "coin") <= MAX_COINS
     for z in s["zones"]:
         assert set(z.keys()) == ZONE_KEYS and z["kind"] in ZONE_KINDS
     assert len(s["hud"]["char_locked"]) == len(CHAR_KEYS)
@@ -3109,7 +3503,7 @@ def _check_snapshot(s: dict):
         assert set(w.keys()) == WORD_KEYS and w["kind"] in WORD_KINDS and 0 <= w["typed"] <= len(w["text"])
     assert len(s["hud"]["inventory"]) == INV_SLOTS
     for it in s["hud"]["inventory"]:
-        assert it is None or (it["kind"] in ITEM_KINDS and 1 <= it["count"] <= INV_STACK)
+        assert it is None or (it["kind"] in ITEM_KINDS and 1 <= it["count"] <= INV_STACK_MAX)
     for f in s["effects"]:
         assert set(f.keys()) == EFFECT_KEYS and f["kind"] in EFFECT_KINDS
     for w in s["warnings"]:
@@ -3460,7 +3854,8 @@ def selftest() -> int:
     assert hw.state == "shop", hw.state
     assert SHOP_ORDER[0] == "str" and "damage" not in hw.shop_items
     cost = hw._shop_cost("str")
-    assert cost == 1500, cost
+    assert cost == 1200, cost                    # v2.0: flatter stat shop (1200 x 1.20^lv)
+    assert hw._shop_cost("shield") == 2500 and hw._shop_cost("life") == 4000 and hw._shop_cost("rate") == 2500
     hw.score = cost
     hw.state_t = 1.0
     hw.key_down("confirm"); hw.key_up("confirm")
@@ -3697,7 +4092,7 @@ def selftest() -> int:
     sw2.phase = "boss"; sw2._spawn_boss()
     fbe = sw2.boss_ref
     assert fbe.rank == "boss_mai" and fbe.label == "총무팀장" and fbe.palette == "mai" and not fbe.mid
-    assert fbe.hp_max == 150, fbe.hp_max
+    assert fbe.hp_max == 120, fbe.hp_max          # v2.0: 150 x normal stage-1 warm-up 0.8
     for n, want, title in ((2, "teamlead", "팀장 대행"), (3, "general", "감사 부장"), (4, "general", "감사 부장"),
                            (5, "deputy", "기획 차장")):
         mw2 = World(stages, config, {}, 1600, 360, seed=72)
@@ -3747,9 +4142,10 @@ def selftest() -> int:
     # effects: hat -> shield max, gloves -> fire rate, shoes -> speed / jump, suit -> magic
     assert qw._shield_max() == 3 + 2, qw._shield_max()
     assert qw.snapshot()["hud"]["shield_max"] == 5
-    assert abs(qw._speed_mult(qw.char) - 0.94 * 1.12) < 1e-9 and abs(qw._jump_mult(qw.char) - 0.96 * 1.08) < 1e-9
+    # v2.0: per-level values halved (shoes speed .06 / jump .04, gloves rate .10)
+    assert abs(qw._speed_mult(qw.char) - 0.94 * 1.06) < 1e-9 and abs(qw._jump_mult(qw.char) - 0.96 * 1.04) < 1e-9
     assert qw._magic_dmg(qw.char) == 1 + 1, qw._magic_dmg(qw.char)
-    assert abs(qw._fire_rate_mult(qw.char) - 1.2) < 1e-9
+    assert abs(qw._fire_rate_mult(qw.char) - 1.1) < 1e-9
     base_w = World(stages, config, {"char": "hyunki"}, 1600, 360, seed=83)
     base_w._start_game(1)
     assert abs(base_w._fire_rate_mult(base_w.char) - 1.0) < 1e-9 and base_w._shield_max() == 3
@@ -3775,6 +4171,24 @@ def selftest() -> int:
     nw.key_down("right"); nw.key_up("right")
     _run(nw, 0.3); nw.key_down("confirm"); nw.key_up("confirm")
     assert nw.state == "play" and nw.stage_no == 1 and sum(nw.equip.values()) == 0
+    hi = World(stages, config, dict(sd, equip={"hat": 9, "gloves": 1, "suit": 1, "shoes": 1}), 1600, 360, seed=87)
+    hi._start_game(2, keep_upgrades=True)
+    assert hi.equip["hat"] == 3 and hi._equip_max("hat") == 3, hi.equip   # v2.0: saved levels above "max" clamp
+    # v2.0: every slot caps at "max" (3); once all are capped a dept boss pays LEGACY_CAP_MONEY * stage instead
+    qw.enemies.clear(); qw.pending.clear(); qw.boss_ref = None
+    qw.stage["mult"]["money"] = 0.0             # no boss money credit -> the bonus is the only money change
+    for _ in range(7):                          # 5 + 7 = 12 dept bosses -> 3 / 3 / 3 / 3
+        qw.phase = "boss"; qw.boss_index = 0
+        qw._spawn_boss(); qw._damage_enemy(qw.boss_ref, 10 ** 9)
+        qw.enemies.clear(); qw.boss_ref = None
+    assert qw.equip == {k: 3 for k in EQUIP_ORDER}, qw.equip
+    m_cap = qw.money
+    qw.phase = "boss"; qw.boss_index = 0
+    qw._spawn_boss(); qw._damage_enemy(qw.boss_ref, 10 ** 9)
+    qw.enemies.clear(); qw.boss_ref = None
+    assert qw.equip == {k: 3 for k in EQUIP_ORDER} and qw.money == m_cap + LEGACY_CAP_MONEY * qw.stage_no, qw.money
+    assert "보너스" in qw._equip_msg and qw.banner == qw._equip_msg and qw._shield_max() == 3 + 3, qw._equip_msg
+    assert abs(qw._fire_rate_mult(qw.char) - 1.3) < 1e-9 and abs(qw._speed_mult(qw.char) - 0.94 * 1.18) < 1e-9
     # the clear banner carries the pickup
     qw2 = World(stages, config, {}, 1600, 360, seed=86)
     qw2._start_game(1)
@@ -3885,16 +4299,19 @@ def selftest() -> int:
 
     # 19) v1.8 tempo + motion variety: x2 speed (+10 %/stage, capped), halved gaps, sprint / pause modes,
     #     ground-burst and sky-drop spawns announced by warnings, landing dust, contact damage
-    vw = _quiet("jaehwi", 94)
+    vw = _quiet("jaehwi", 94)                    # normal: v2.0 DIFF_CURVE speed cap 2.6 (hard+ keep 3.0 -> x6.0)
     base = float(stages["ranks"]["intern"]["speed"])
-    for st, want in ((1, 2.0), (2, 2.2), (5, 2.0 * 1.1 ** 4), (13, 6.0), (30, 6.0)):
+    for st, want in ((1, 2.0), (2, 2.2), (5, 2.0 * 1.1 ** 4), (13, 5.2), (30, 5.2)):
         vw.stage_no = st
+        vw.stage = vw._build_stage(st)           # the cap is resolved into the stage at build time
         assert abs(vw._enemy_speed_mult() - want) < 1e-9, (st, vw._enemy_speed_mult())
         en = vw._make_enemy("intern", 900.0)
-        assert abs(en.speed - base * want) < 1e-6, (st, en.speed)
+        assert abs(en.speed - base * want * vw.stage["mult"]["speed"]) < 1e-6, (st, en.speed)
+    assert abs(vw._build_stage(1)["mult"]["speed"] - 0.8) < 1e-9 and abs(vw._build_stage(4)["mult"]["speed"] - 1.0) < 1e-9
     vw.stage_no = 1
+    vw.stage = vw._build_stage(1)
     bz = vw._make_enemy("teamlead", 1500.0, boss=True)
-    assert abs(bz.speed - stages["ranks"]["teamlead"]["boss_speed"] * 2.0) < 1e-6, bz.speed
+    assert abs(bz.speed - stages["ranks"]["teamlead"]["boss_speed"] * 2.0 * 0.8) < 1e-6, bz.speed   # stage-1 warm-up
     assert DEFAULT_WAVE["spawn_stagger"] == 0.3 and vw.wave_cfg["spawn_stagger"] == 0.3
     assert WAVE_GAP == 0.5 and BOSS_GAP == 0.5 and BOSS_NEXT_GAP == 0.6 and CLEAR_TO_SHOP == 1.0
     # movement modes: over 12 s of approaching from far away, a grunt walks, sprints and pauses
@@ -3989,7 +4406,8 @@ def selftest() -> int:
     vw.update(1 / 30)
     assert not vw.warnings and len(vw.enemies) == 1 and vw.enemies[0].x < 0
     vw.pits = []
-    print("PASS 19: enemy speed x2 (+10 %/stage, cap 3x), gaps halved, walk/sprint/pause, ground/sky spawns + warnings")
+    print("PASS 19: enemy speed x2 (+10 %/stage, cap 3x; easy/normal 2.2x/2.6x), gaps halved, walk/sprint/pause,"
+          " ground/sky spawns + warnings")
 
     # 20) v1.9: inventory, per-character melee, enemy melee, allies, bomb / coffee, typing words, money,
     #     difficulty, town (shop / box / warehouse / gambling), gravity bombs, balance log, save round-trip
@@ -4123,15 +4541,93 @@ def selftest() -> int:
     _run(tw9, 1.0)
     assert not tw9.words, "only WORDS_PER_STAGE words per stage"
     _check_snapshot(tw9.snapshot())
-    # money: kills drop coins that fly to the player
+    # money (v2.0): kills leave coin piles where the enemy died (no homing); walk over them, merge, cap, pit edge,
+    # TTL, piles survive a respawn, stage clear collects the rest; the final boss pays directly
     cw9 = _fresh("jaehwi", 107)
+    cw9.player.inv_t = 99.0                     # waves keep coming; the player must survive the whole block
+    assert COIN_TTL == 20.0 and Item(0, 0, "coin", 5).t == COIN_TTL and not cw9._perk("magnet")
     vic = cw9._make_enemy("staff", cw9.player.x + 200); vic.fire_rate = 0.0; vic.speed = 0.0
     cw9.enemies.append(vic)
     m0 = cw9.money
     cw9._damage_enemy(vic, 10 ** 6)
-    assert any(it.kind == "coin" and it.value > 0 for it in cw9.items)
+    coin = next(it for it in cw9.items if it.kind == "coin" and it.value > 0)
     _run(cw9, 1.5)
-    assert cw9.money > m0 and not any(it.kind == "coin" for it in cw9.items), (cw9.money, m0)
+    assert cw9.money == m0 and coin in cw9.items and coin.on_ground and coin.vx == 0.0, "coins must not home"
+    assert abs(coin.x - (cw9.player.x + 200)) < 120 and coin.y == cw9.ground_y, coin.x
+    vic2 = cw9._make_enemy("staff", coin.x); vic2.fire_rate = 0.0; vic2.speed = 0.0
+    cw9.enemies.append(vic2); v = coin.value
+    cw9._damage_enemy(vic2, 10 ** 6)
+    assert sum(1 for it in cw9.items if it.kind == "coin") == 1 and coin.value > v, "nearby drops merge into the pile"
+    cw9.player.x = coin.x + COIN_PICK_R + 30    # near, but outside the pickup radius
+    _run(cw9, 0.1)
+    assert cw9.money == m0 and coin in cw9.items
+    cw9.player.x = coin.x + COIN_PICK_R - 1
+    _run(cw9, 0.1)
+    assert cw9.money == m0 + coin.value and not any(it.kind == "coin" for it in cw9.items), (cw9.money, m0)
+    fx = next(f for f in cw9.effects if f["kind"] == "coin")
+    assert fx["ttl"] == 0.8 and fx["text"] == f"+₩{coin.value:,}", fx
+    cw9.items.clear()                           # cap: far-apart drops merge into MAX_COINS piles, value kept
+    for i in range(MAX_COINS + 6):
+        cw9._spawn_coin(100.0 + 60.0 * i, cw9.ground_y - 10, 10)
+    piles = [it for it in cw9.items if it.kind == "coin"]
+    assert len(piles) == MAX_COINS and sum(it.value for it in piles) == 10 * (MAX_COINS + 6)
+    _check_snapshot(cw9.snapshot())
+    cw9.items.clear()                           # pit: coins landing over a pit slide to the nearest edge and merge there
+    cw9.pits = [(1000.0, 100.0)]
+    for _ in range(2):
+        cw9._spawn_coin(1050.0, cw9.ground_y - 10, 30)
+        cw9.items[-1].vx = 0.0
+    assert sum(1 for it in cw9.items if it.kind == "coin") == 2, "airborne coins stay separate until they land"
+    _run(cw9, 0.6)
+    piles = [it for it in cw9.items if it.kind == "coin"]
+    assert len(piles) == 1 and piles[0].value == 60, [(it.x, it.value) for it in piles]
+    pc = piles[0]
+    assert pc.on_ground and not cw9._over_pit(pc.x) and pc.x in (990.0, 1110.0), pc.x
+    cw9.pits = []
+    cw9.items.clear()                           # overlay resize: floor coins follow the ground and stay reachable
+    cw9._spawn_coin(cw9.player.x + 300, cw9.ground_y - 10, 40)
+    cw9.items[-1].vx = 0.0
+    _run(cw9, 0.6)
+    rc = next(it for it in cw9.items if it.kind == "coin")
+    assert rc.on_ground and rc.y == cw9.ground_y
+    w0, h0 = cw9.width, cw9.height
+    cw9.resize(w0, h0 + 240)
+    assert rc.y == cw9.ground_y == h0 + 240 - 10 and rc.on_ground, (rc.y, cw9.ground_y)
+    cw9.player.x = rc.x
+    assert cw9._coin_reach(rc, cw9.player), (rc.y, cw9.player.y)
+    cw9.resize(w0, h0)
+    assert rc.y == cw9.ground_y and cw9._coin_reach(rc, cw9.player)
+    cw9.items.clear()
+    cw9._spawn_coin(cw9.player.x + 300, cw9.ground_y - 10, 50)
+    cw9.items[-1].t = 0.3
+    _run(cw9, 0.5)
+    assert not any(it.kind == "coin" for it in cw9.items), "coins expire after COIN_TTL"
+    cw9._spawn_coin(cw9.player.x + 300, cw9.ground_y - 10, 70)
+    cw9.items.append(Item(cw9.player.x + 350, cw9.ground_y - 10, "laser"))
+    lives_c = cw9.lives
+    cw9._debug_kill_player()
+    _run(cw9, 1.2)
+    assert cw9.lives == lives_c - 1 and cw9.state == "play"
+    assert [it.kind for it in cw9.items] == ["coin"], "floor money survives a respawn (other items do not)"
+    m1 = cw9.money
+    cw9._stage_clear()
+    assert cw9.money == m1 + 70 and not any(it.kind == "coin" for it in cw9.items), "clear collects floor money"
+    assert cw9.banner.endswith(" · 바닥 ₩70 회수"), cw9.banner
+    _check_snapshot(cw9.snapshot())
+    cb = _fresh("jaehwi", 115)                  # final boss: money credited at once, no coin; mid boss: coin
+    cb.items.clear()
+    fb_ = cb._make_enemy("boss_mai", cb.player.x + 400, boss=True); fb_.intro = False
+    cb.enemies.append(fb_); cb.boss_ref = fb_
+    m2 = cb.money
+    cb._damage_enemy(fb_, 10 ** 9)
+    assert cb.money > m2 and not any(it.kind == "coin" for it in cb.items), (cb.money, m2)
+    assert any(f["kind"] == "coin" and f["text"] == f"+₩{cb.money - m2:,}" for f in cb.effects)
+    assert cb._bal["money"] == cb.money - m2
+    mb_ = cb._make_enemy("teamlead", cb.player.x + 400, boss=True); mb_.mid = True; mb_.intro = False
+    cb.enemies.append(mb_)
+    m3 = cb.money
+    cb._damage_enemy(mb_, 10 ** 9)
+    assert cb.money == m3 and any(it.kind == "coin" and it.value > 0 for it in cb.items), "mid boss drops a coin"
     # difficulty: locks and multipliers
     dw = World(stages, config, {"difficulty": "crazy"}, 1920, 340, seed=108)
     assert dw.difficulty_key == "normal", "crazy is locked without clears"
@@ -4149,6 +4645,36 @@ def selftest() -> int:
     st_c = dw._build_stage(1)
     assert abs(st_c["mult"]["hp"] - 3.0) < 1e-9 and abs(st_c["mult"]["speed"] - 2.0) < 1e-9 and st_c["mult"]["money"] == 3.0
     assert dw.snapshot()["hud"]["difficulty_label"] == "크레이지" and len(dw.snapshot()["hud"]["difficulty_locked"]) == 6
+    # v2.0: hard+ keep the DIFF_MULT formula byte-for-byte; easy / normal use DIFF_CURVE (+ stage 1-3 warm-up)
+    assert set(DIFF_CURVE) == {"easy", "normal"} and set(dw.curve) == {"easy", "normal"}
+    assert st_c["hp_per_stage"] == 0.35 and st_c["speed_cap"] == 3.0
+    hd = World(stages, config, {"difficulty": "hard"}, 1920, 340, seed=113)
+    assert hd.difficulty_key == "hard"
+    st_h = hd._build_stage(1)
+    for k, want in (("hp", 1.3), ("speed", 1.15), ("count", 1.12), ("proj", 1.3), ("money", 1.3)):
+        assert abs(st_h["mult"][k] - want) < 1e-9, (k, st_h["mult"][k])
+    assert st_h["hp_per_stage"] == 0.35 and st_h["boss_hp_per_stage"] == 0.08 and st_h["speed_cap"] == 3.0
+    hd._start_game(1)
+    hd.enemies.clear(); hd.pending.clear()
+    hd.phase = "boss"; hd._spawn_boss()
+    assert hd.boss_ref.hp_max == 195 and hd._make_enemy("intern", 900.0).hp_max == 4, hd.boss_ref.hp_max
+    hd.stage_no = 13; hd.stage = hd._build_stage(13)
+    assert abs(hd._enemy_speed_mult() - 6.0) < 1e-9
+    for diff, want_hp, want_intern in (("easy", 68, 1), ("normal", 120, 2)):
+        ed = World(stages, config, {"difficulty": diff}, 1920, 340, seed=114)
+        assert ed.difficulty_key == diff
+        ed._start_game(1)
+        ed.enemies.clear(); ed.pending.clear()
+        ed.phase = "boss"; ed._spawn_boss()
+        assert abs(ed.boss_ref.hp_max - want_hp) <= 1, (diff, ed.boss_ref.hp_max)
+        assert ed._make_enemy("intern", 900.0).hp_max == want_intern, diff
+        cv = DIFF_CURVE[diff]
+        st4 = ed._build_stage(4)                 # warm-up ends at stage 4
+        assert abs(st4["mult"]["hp"] - cv["hp"]) < 1e-9 and abs(st4["mult"]["count"] - cv["count"]) < 1e-9
+        assert st4["mult"]["money"] == cv["money"] and st4["mult"]["proj"] == cv["proj"]
+        assert st4["hp_per_stage"] == cv["hp_per_stage"] and st4["speed_cap"] == cv["speed_cap"]
+        assert ed._build_stage(1)["mult"]["speed"] < ed._build_stage(2)["mult"]["speed"] < ed._build_stage(3)["mult"]["speed"]
+        assert ed._build_stage(25)["mult"]["hp"] > st4["mult"]["hp"], "infinite cycles still escalate"
     # boss jump : dash odds ~ 1 : 5
     bw9 = _fresh("jaehwi", 109)
     jumps = dashes = 0
@@ -4214,12 +4740,42 @@ def selftest() -> int:
     assert tw5.town["store_mode"] == "equipped"
     while tw5._town_list("store")[tw5.town["index"]["store"]][1] != eq_slot:
         tw5.key_down("right"); tw5.key_up("right")
+    # v2.0: C on the equipped row = deterministic 강화 (+1 level, rarity-scaled cost); store view carries the numbers
+    town = tw5.snapshot()["hud"]["town"]
+    assert {"enhance_cost", "can_enhance", "max_level", "slot_labels", "slot_order", "effect", "effect_next",
+            "items_slot", "total", "perks", "perk_labels", "perk_desc", "upgrade_cost"} <= set(town["store"])
+    assert town["store"]["max_level"] == economy.MAX_LEVEL and town["store"]["slot_order"] == list(economy.SLOTS)
+    assert town["store"]["slot_labels"] == economy.SLOT_LABEL and town["store"]["total"] == tw5._equip_fx()
+    assert town["store"]["items_slot"] == [e["slot"] for e in tw5.warehouse.items]
+    assert town["store"]["effect"][eq_slot] is not None and town["store"]["effect_next"][eq_slot] is not None
+    assert all(town["store"]["effect"][k] is None for k in economy.SLOTS if k != eq_slot)
+    assert town["store"]["perks"] == {} and isinstance(town["store"]["perk_labels"], dict)
+    lv0 = tw5.warehouse.equipped[eq_slot]["level"]
+    cost = economy.enhance_cost(tw5.warehouse.equipped[eq_slot])
+    assert town["store"]["enhance_cost"][eq_slot] == cost > 0 and town["store"]["can_enhance"][eq_slot]
+    m_e = tw5.money
+    tw5.key_down("skill"); tw5.key_up("skill")                 # 강화
+    assert tw5.warehouse.equipped[eq_slot]["level"] == lv0 + 1 and tw5.money == m_e - cost, tw5.town["msg"]
+    assert "성공" in tw5.town["msg"] and any(f["kind"] == "boxopen" for f in tw5.effects)
+    m_e = tw5.money; tw5.money = 0
+    tw5.key_down("skill"); tw5.key_up("skill")
+    assert tw5.warehouse.equipped[eq_slot]["level"] == lv0 + 1 and "부족" in tw5.town["msg"]
+    assert not tw5.snapshot()["hud"]["town"]["store"]["can_enhance"][eq_slot]
+    tw5.money = m_e
+    tw5.warehouse.equipped[eq_slot]["level"] = economy.MAX_LEVEL
+    tw5.key_down("skill"); tw5.key_up("skill")
+    assert tw5.warehouse.equipped[eq_slot]["level"] == economy.MAX_LEVEL and tw5.money == m_e and "최대" in tw5.town["msg"]
+    store_v = tw5.snapshot()["hud"]["town"]["store"]
+    assert store_v["enhance_cost"][eq_slot] == 0 and not store_v["can_enhance"][eq_slot] and store_v["effect_next"][eq_slot] is None
+    tw5.warehouse.equipped[eq_slot]["level"] = lv0 + 1
+    _check_snapshot(tw5.snapshot())
     tw5.key_down("confirm"); tw5.key_up("confirm")             # unequip
     assert tw5.warehouse.equipped[eq_slot] is None and len(tw5.warehouse.items) == n_items
     tw5.key_down("up"); tw5.key_up("up")                       # back to list
     m2 = tw5.money
     tw5.key_down("skill"); tw5.key_up("skill")                 # sell item 0
     assert tw5.money > m2 and len(tw5.warehouse.items) == n_items - 1
+    sold = tw5.money - m2
     tw5.key_down("tab"); tw5.key_up("tab")                     # gamble
     assert tw5._town_tab() == "gamble"
     tw5.warehouse.items.append(economy.make_equipment(tw5.rng, "hat", "normal", 0, 5))
@@ -4244,6 +4800,21 @@ def selftest() -> int:
     assert tw5._town_list("gamble")[tw5.town["index"]["gamble"]][0] == "next"
     tw5.key_down("confirm"); tw5.key_up("confirm")
     assert tw5.state == "play" and tw5.stage_no == 6 and tw5.town is None
+    assert tw5._bal["spent"] > 0 and tw5._bal["gambles"] == 3 and not tw5._bal_carry   # v2.0: town sinks carried
+    assert tw5._bal["money"] >= sold, tw5._bal["money"]           # ...and town sources (sell / payouts) too
+    # leaving from the 창고 tab's trailing "다음" row (TOWN_HINT sends players there for 강화) must not crash
+    tw6 = _fresh("jaehwi", 116, stage=TOWN_EVERY, money=5000)
+    tw6._stage_clear()
+    _run(tw6, CLEAR_TO_SHOP + 0.1)
+    assert tw6.state == "town"
+    for _ in range(2):
+        tw6.key_down("tab"); tw6.key_up("tab")
+    assert tw6._town_tab() == "store"
+    tw6.key_down("left"); tw6.key_up("left")                  # wraps to ("next", None)
+    assert tw6._town_list("store")[tw6.town["index"]["store"]][0] == "next"
+    tw6.state_t = 1.0
+    tw6.key_down("confirm"); tw6.key_up("confirm")
+    assert tw6.state == "play" and tw6.stage_no == TOWN_EVERY + 1 and tw6.town is None
     # game over keeps money / warehouse (meta progression)
     go = _fresh("jaehwi", 112, money=777)
     go.lives = 1
@@ -4251,8 +4822,342 @@ def selftest() -> int:
     _run(go, 1.2)
     assert go.state == "game_over" and go.money == 777 and go.save_data()["money"] == 777
     assert go.drain_log() and go.drain_log() == []
+    # v2.0 perks (economy.PERKS): {key: rank} cache, character mask (rule 8), per-stage charges and every hook
+    def _gear(w, slot, rarity, perks, seed=7):
+        eq = dict(economy.make_equipment(random.Random(seed), slot, rarity, 0, 1), perks=list(perks))
+        w.warehouse.equipped[slot] = eq
+        w._refresh_perks()
+        return eq
+    pj = _fresh("jaehwi", 120)
+    assert pj.perks == {} and pj._perk("magnet") == 0 and pj._perk_mult("ult_time") == 1.0 and pj.perk_used == {}
+    assert pj._perk_exclusions() == ("ult_time", "ult_haste") and _fresh("dongil", 120)._perk_exclusions() == ("pierce",)
+    assert _fresh("hyunki", 120)._perk_exclusions() == () and _fresh("masked", 120)._perk_exclusions() == ("ult_time", "ult_haste")
+    # (a) double_jump: an airborne jump changes vy exactly once per flight (rare), twice (unique); recharged on landing
+    for rarity, want in (("rare", 1), ("unique", 2)):
+        dj = _fresh("jaehwi", 121); dj.player.inv_t = 99.0
+        _gear(dj, "shoes", rarity, ["double_jump"])
+        assert dj._perk("double_jump") == want
+        _run(dj, 0.1)
+        assert dj.player.air_jumps == want and dj.player.on_ground
+        dj.key_down("jump"); dj.key_up("jump"); dj.update(1 / 30)
+        assert not dj.player.on_ground and dj.player.vy < 0
+        ups = 0
+        for i in range(120):
+            if i % 5 == 0:
+                dj.key_down("jump"); dj.key_up("jump")
+            vy0 = dj.player.vy
+            dj.update(1 / 30)
+            if not dj.player.on_ground and abs(dj.player.vy - (vy0 + GRAVITY * (1 / 30))) > 1e-6:
+                ups += 1                        # any non-gravity vy change while airborne = an air jump
+            if dj.player.on_ground:
+                break
+        assert ups == want and dj.player.on_ground and dj.player.air_jumps == want, (rarity, ups)
+    # (b) magnet: off -> a coin 200 px away stays on the floor; rare pulls inside 160 px only; unique = whole band
+    mg = _fresh("jaehwi", 122); mg.player.inv_t = 99.0
+    mg._spawn_coin(mg.player.x + 200, mg.ground_y - 10, 30); mg.items[-1].vx = 0.0
+    _run(mg, 1.5)
+    cn = next(it for it in mg.items if it.kind == "coin")
+    assert mg.money == 0 and cn.on_ground and abs(cn.x - (mg.player.x + 200)) < 1e-6, "no magnet: coins stay put"
+    _gear(mg, "acc", "rare", ["magnet"])
+    assert mg._perk("magnet") == 160
+    _run(mg, 1.5)
+    assert mg.money == 0 and cn in mg.items, "rare magnet: 200 px is outside the 160 px radius"
+    mg.player.x = cn.x - 150
+    _run(mg, 1.5)
+    assert mg.money == 30 and not any(it.kind == "coin" for it in mg.items), "rare magnet pulls coins inside 160 px"
+    _gear(mg, "acc", "unique", ["magnet", "haggler"])
+    assert mg._perk("magnet") == 9999 and mg.perks == {"magnet": 2, "haggler": 2}
+    mg._spawn_coin(mg.player.x + 900, mg.ground_y - 10, 40); mg.items[-1].vx = 0.0
+    _run(mg, 2.0)
+    assert mg.money == 70 and not any(it.kind == "coin" for it in mg.items), "unique magnet: whole band"
+    # (c) ult_time / ult_haste (dongil): zone ttl = duration x value, cooldown = max(cd x value, dur + 1)
+    uw = _fresh("dongil", 123); uw.player.inv_t = 99.0
+    st_ = uw.char["storm"]; d0, c0 = float(st_.get("duration", 3.0)), float(st_.get("cooldown", 8.0))
+    uw.key_down("skill"); uw.key_up("skill")
+    assert uw.zones and uw.zones[-1]["ttl"] == d0 and uw.player.skill_cd == max(c0, d0 + 1.0)
+    uw.zones.clear(); uw.player.skill_cd = 0.0
+    _gear(uw, "suit", "rare", ["ult_haste"])
+    uw.key_down("skill"); uw.key_up("skill")
+    assert uw.zones[-1]["ttl"] == d0 and abs(uw.player.skill_cd - max(c0 * 0.75, d0 + 1.0)) < 1e-9
+    uw.zones.clear(); uw.player.skill_cd = 0.0
+    _gear(uw, "suit", "unique", ["ult_time", "ult_haste"])
+    uw.key_down("skill"); uw.key_up("skill")
+    assert abs(uw.zones[-1]["ttl"] - d0 * 2.0) < 1e-9 and abs(uw.player.skill_cd - max(c0 * 0.6, d0 * 2.0 + 1.0)) < 1e-9
+    assert uw.snapshot()["hud"]["skill_cd"] == round(uw.player.skill_cd, 2)
+    jw = _fresh("jaehwi", 123)                   # the same suit on a storm-less character is masked, not applied
+    _gear(jw, "suit", "unique", ["ult_time", "ult_haste"])
+    assert jw.perks == {"ult_time": 2, "ult_haste": 2} and jw._perk("ult_time") == 0 and jw._perk_mult("ult_haste") == 1.0
+    assert not jw._perk_ok("ult_time") and jw._perk_ok("magnet") and jw.snapshot()["hud"]["perks"] == []
+    # (d) second_wind / pit_save fire once per stage, then the next hit / fall kills; a respawn restores the charge
+    sw = _fresh("jaehwi", 124)
+    _gear(sw, "hat", "rare", ["second_wind"])
+    sw.player.shield = 0; sw.player.inv_t = 0.0
+    lives_s = sw.lives
+    sw._hit_player()
+    assert not sw.player.dead and sw.perk_used.get("second_wind") is True and sw.player.inv_t == 2.0 and sw.banner == "재기!"
+    assert sw.snapshot()["hud"]["perks"][0]["used"] is True and sw._bal["revives"] == 1
+    sw.player.inv_t = 0.0
+    sw._hit_player()
+    assert sw.player.dead and sw.lives == lives_s
+    _run(sw, 1.2)
+    assert sw.lives == lives_s - 1 and sw.state == "play" and not sw.perk_used and not sw.player.dead
+    sw.player.shield = 0; sw.player.inv_t = 0.0
+    sw.bullets.append(Bullet(sw.player.x + 100, sw.ground_y - 10, 8, 4, -100.0, 0.0, "enemy"))
+    _gear(sw, "hat", "unique", ["second_wind", "shield_burst"])
+    sw._hit_player()
+    assert not sw.player.dead and sw.player.inv_t == 3.0 and sw.player.shield == sw._shield_max()
+    assert all(b.dead for b in sw.bullets if b.owner == "enemy")
+    assert next(d for d in sw.snapshot()["hud"]["perks"] if d["key"] == "second_wind")["used"] is True
+    ps = _fresh("jaehwi", 125); ps.player.inv_t = 99.0
+    _gear(ps, "shoes", "rare", ["pit_save"])
+    _run(ps, 0.1)
+    assert ps._last_ground_x == ps.player.x == 600.0
+    ps.pits = [(900.0, 100.0)]
+    lives_p = ps.lives
+    for n, alive in ((1, True), (2, False)):
+        ps.player.x, ps.player.y, ps.player.on_ground = 950.0, ps.height + 100.0, False
+        ps.update(1 / 30)
+        assert (not ps.player.dead) is alive, n
+        if alive:
+            assert ps.player.x == 600.0 and ps.player.y == ps.ground_y and ps.perk_used["pit_save"] == 1 and ps.player.inv_t == 1.0
+            assert any(f["kind"] == "text" and f["text"] == "구조!" for f in ps.effects)
+            assert ps.snapshot()["hud"]["perks"][0] == {"key": "pit_save", "label": "낙하 구조", "rank": 1, "text": "추락 구조 1회", "used": True}
+            ps.player.inv_t = 99.0
+    assert ps.lives == lives_p
+    # a window resize rescales the rescue point with the pits; a stale point inside a pit rescues to its edge
+    pr = _fresh("jaehwi", 127); pr.player.inv_t = 99.0
+    _gear(pr, "shoes", "rare", ["pit_save"])
+    pr.pits = [(400.0, 100.0)]; pr.player.x = 550.0
+    _run(pr, 0.1)
+    assert pr._last_ground_x == 550.0 and not pr._over_pit(550.0)
+    pr.resize(2496, 340)                     # rx 1.3: pit -> (520, 100); 550 would now sit inside it
+    assert pr.pits == [(520.0, 100.0)] and abs(pr._last_ground_x - 715.0) < 1e-6 and not pr._over_pit(pr._last_ground_x)
+    pr._last_ground_x = 560.0
+    lives_r = pr.lives
+    pr.player.x, pr.player.y, pr.player.on_ground = 560.0, pr.height + 100.0, False
+    pr.update(1 / 30)
+    assert not pr.player.dead and pr.player.x == 510.0 and not pr._over_pit(pr.player.x) and pr.perk_used["pit_save"] == 1
+    pr.player.inv_t = 99.0
+    _run(pr, 2.0)
+    assert not pr.player.dead and pr.lives == lives_r and pr.player.on_ground, "rescue never lands in a pit"
+    pu = _fresh("hyunki", 126); pu.player.inv_t = 99.0
+    _gear(pu, "shoes", "unique", ["pit_save", "double_jump"])
+    _run(pu, 0.1); pu.pits = [(900.0, 100.0)]
+    sh0 = pu.player.shield
+    assert sh0 == 3
+    for n in range(3):
+        pu.player.x, pu.player.y, pu.player.on_ground = 950.0, pu.height + 100.0, False
+        pu.update(1 / 30)
+        assert not pu.player.dead and pu.player.x == 600.0 and pu.perk_used["pit_save"] == n + 1 and pu.player.air_jumps == 2
+    assert pu.player.shield == sh0 - 2 and not pu.snapshot()["hud"]["perks"][0]["used"], "unique: free once, then a shield per rescue"
+    # (e) pierce: rare hits 2 of 3 lined-up staff (extra=1), unique all 3 (pierce=True), none 1
+    for rarity, want in ((None, 1), ("rare", 2), ("unique", 3)):
+        pw = _fresh("jaehwi", 127); pw.player.inv_t = 99.0
+        if rarity:
+            _gear(pw, "weapon", rarity, ["pierce"])
+        row = []
+        for k in range(3):
+            e = pw._make_enemy("staff", pw.player.x + 70 + 40 * k); e.fire_rate = 0.0; e.speed = 0.0
+            e.hp = e.hp_max = 10 ** 6
+            pw.enemies.append(e); row.append(e)
+        pw.player.facing = 1
+        pw._player_fire(pw.player, pw.char)
+        b = pw.bullets[-1]
+        assert b.owner == "player" and b.extra == (1 if rarity == "rare" else 0) and b.pierce is (rarity == "unique")
+        for _ in range(30):
+            pw.update(1 / 30)
+        assert sum(1 for e in row if e.hp < e.hp_max) == want, (rarity, [e.hp for e in row])
+    # (f) character fit: jaehwi / masked never roll ult_*, dongil never rolls pierce; >= 2 keys stay in every pool
+    for w_, bad in ((_fresh("jaehwi", 128), {"ult_time", "ult_haste"}), (_fresh("masked", 128), {"ult_time", "ult_haste"}),
+                    (_fresh("dongil", 128), {"pierce"})):
+        ex = w_._perk_exclusions()
+        assert set(ex) == bad
+        for slot in economy.SLOTS:
+            assert len(economy.perk_pool("rare", slot, ex)) >= 2, (w_.char_key, slot)
+        seen = set()
+        for i in range(300):
+            seen |= set(economy.make_equipment(random.Random(i), economy.SLOTS[i % len(economy.SLOTS)], "unique", 0, 9,
+                                               exclude=ex)["perks"])
+        assert not (seen & bad) and len(seen) >= 10, (w_.char_key, seen)
+        for i in range(40):                      # the game's own rolls carry the mask (typing 'gear' reward)
+            w_.warehouse.items.clear()
+            w_._word_done({"kind": "gear", "x": 100.0, "y": 100.0, "text": "gear", "typed": 0, "t": 0.0, "vy": 0.0})
+            assert w_.warehouse.items and not (set(w_.warehouse.items[0]["perks"]) & bad), w_.warehouse.items
+        assert w_.perks == {} and w_.state == "play"
+    # (g) hud["perks"]: active set only, max rank per key, unique first, chips with text; stage banner suffix on change
+    hw = _fresh("hyunki", 129)
+    _gear(hw, "acc", "rare", ["magnet"]); _gear(hw, "shoes", "unique", ["double_jump", "magnet"]); _gear(hw, "suit", "rare", ["ult_time"])
+    hp_ = hw.snapshot()["hud"]["perks"]
+    assert [d["key"] for d in hp_] == ["magnet", "double_jump", "ult_time"] and [d["rank"] for d in hp_] == [2, 2, 1], hp_
+    assert all(set(d) == {"key", "label", "rank", "text", "used"} for d in hp_)
+    assert hp_[0]["text"] == "코인 자석 전체" and hp_[2]["text"] == "궁극기 지속 x1.5" and hp_[1]["label"] == "더블 점프"
+    assert hw.snapshot()["hud"]["perk_labels"]["magnet"] == "코인 자석" and hw._perk("magnet") == 9999
+    _check_snapshot(hw.snapshot())
+    hw._start_stage(2)
+    assert hw.banner.endswith(" · 퍽: 코인 자석 · 더블 점프 · 궁극 지속") and hw.player.air_jumps == 2, hw.banner
+    hw._start_stage(3)
+    assert "퍽:" not in hw.banner, "the perk suffix shows only when the set changed"
+    # remaining hooks: shield_regen, inv_stack, item_time, keep_weapon, kill_haste, melee_reach, stomp, crit, boss_killer, loot_luck
+    rg = _fresh("hyunki", 130); rg.player.inv_t = 99.0
+    _gear(rg, "hat", "rare", ["shield_regen"])
+    rg.player.shield = 0
+    _run(rg, 14.5)
+    assert rg.player.shield == 0 and rg.player.regen_t > 14.0
+    _run(rg, 1.0)
+    assert rg.player.shield == 1 and rg.player.regen_t < 1.0
+    rg.player.inv_t = 0.0; rg._hit_player()      # an absorbed hit resets the timer
+    assert rg.player.shield == 0 and rg.player.regen_t == 0.0 and rg.player.inv_t == SHIELD_INV
+    iv = _fresh("jaehwi", 131)
+    _gear(iv, "gloves", "rare", ["inv_stack"])
+    for _ in range(5):
+        iv._pickup("bomb")
+    assert iv.inventory[0] == {"kind": "bomb", "count": INV_STACK + 1} and iv.inventory[1] == {"kind": "bomb", "count": 1}
+    _check_snapshot(iv.snapshot())               # the hud contract accepts a perk stack (INV_STACK_MAX)
+    iv2 = World(stages, config, iv.save_data(), 1920, 340, seed=131)
+    assert iv2.inventory[0]["count"] == INV_STACK + 1 and iv2.perks == {"inv_stack": 1}, "save round-trip keeps the stack"
+    _gear(iv, "gloves", "unique", ["inv_stack", "kill_haste"])
+    for _ in range(3):
+        iv._pickup("bomb")
+    assert iv.inventory[0]["count"] == INV_STACK_MAX == INV_STACK + 2 and iv.inventory[1]["count"] == 3
+    _check_snapshot(iv.snapshot())
+    assert World(stages, config, iv.save_data(), 1920, 340, seed=131).inventory[0]["count"] == INV_STACK_MAX
+    it_ = _fresh("jaehwi", 132)
+    _gear(it_, "acc", "unique", ["item_time", "magnet"]); _gear(it_, "suit", "rare", ["keep_weapon"])
+    it_._use_item("laser"); it_._use_item("coffee"); it_._use_item("drone")
+    assert it_.player.weapon_t == WEAPON_TIME["laser"] * 2.0 and it_.slow_t == COFFEE_T * 2.0 and it_.allies[-1].ttl == DRONE_T * 2.0
+    it_._use_item("homing")
+    assert it_.player.weapon == "homing" and it_.player.ammo == HOMING_AMMO * 2
+    it_._debug_kill_player()
+    assert it_.player.dead and it_.player.weapon == "homing" and it_.player.ammo == HOMING_AMMO * 2, "keep_weapon"
+    _run(it_, 1.2)
+    assert it_.state == "play" and it_.player.weapon == "homing" and it_.player.inv_t <= 2.0
+    _gear(it_, "suit", "unique", ["keep_weapon", "shield_regen"])
+    it_._debug_kill_player(); _run(it_, 1.0 + 1 / 30)
+    assert it_.state == "play" and it_.player.weapon == "homing" and it_.player.inv_t > 3.0, it_.player.inv_t
+    it_.lives = 1; it_._debug_kill_player(); _run(it_, 1.2)
+    assert it_.state == "game_over" and it_.player.weapon == "normal", "keep_weapon ends at game over"
+    kh = _fresh("jaehwi", 133); kh.player.inv_t = 99.0
+    _gear(kh, "gloves", "unique", ["kill_haste", "melee_reach"])
+    fr0 = kh._fire_rate_mult(kh.char)
+    kh.player.fire_cd = 0.5
+    vic = kh._make_enemy("staff", kh.player.x + 300); kh.enemies.append(vic)
+    kh._damage_enemy(vic, 10 ** 6)
+    assert kh.player.fire_cd == 0.0 and kh.player.haste_t == 2.0 and abs(kh._fire_rate_mult(kh.char) - fr0 * 1.3) < 1e-9
+    kh.player.haste_t = 0.0
+    assert abs(kh._fire_rate_mult(kh.char) - fr0) < 1e-9
+    ml = kh.char["melee"]
+    far = kh._make_enemy("staff", 0.0); far.fire_rate = 0.0; far.speed = 0.0
+    far.x = kh.player.x + float(ml["range"]) * 1.5 + far.w / 2 + 2
+    back = kh._make_enemy("staff", 0.0); back.fire_rate = 0.0; back.speed = 0.0
+    back.x = kh.player.x - (back.w / 2 + 10)
+    kh.enemies = [far, back]; kh.player.facing = 1
+    assert set(map(id, kh._melee_targets(kh.player, ml))) == {id(far), id(back)}, "unique reach x1.6 + both sides"
+    # a killing swing has no cooldown either (melee shares fire_cd); a non-lethal swing keeps the melee cd
+    for rarity, want_haste in (("unique", 2.0), ("rare", 0.0)):
+        _gear(kh, "gloves", rarity, ["kill_haste"] + (["melee_reach"] if rarity == "unique" else []))
+        kh.player.haste_t = 0.0; kh.player.fire_cd = 0.0
+        vic = kh._make_enemy("staff", kh.player.x + 30); vic.hp = 1; kh.enemies = [vic]
+        kh._player_melee(kh.player, ml, [vic])
+        assert not vic.alive and kh.player.fire_cd == 0.0 and kh.player.haste_t == want_haste, (rarity, kh.player.fire_cd)
+        tough = kh._make_enemy("staff", kh.player.x + 30); tough.hp = 10 ** 6; kh.enemies = [tough]
+        kh._player_melee(kh.player, ml, [tough])
+        assert tough.alive and kh.player.fire_cd > 0.0, rarity
+    kh.enemies = [far, back]
+    kh.warehouse.equipped["gloves"] = None; kh._refresh_perks()
+    assert kh._melee_targets(kh.player, ml) == [] and kh.perks == {}
+    sp = _fresh("hyunki", 134); sp.player.inv_t = 99.0
+    _gear(sp, "shoes", "unique", ["stomp", "pit_save"])
+    _run(sp, 0.1)
+    st = sp._make_enemy("staff", sp.player.x); st.hp = st.hp_max = 100; st.fire_rate = 0.0; st.speed = 0.0
+    st.x = sp.player.x; sp.enemies = [st]             # straddles both wave start boxes
+    sp.player.y = sp.ground_y - 120.0; sp.player.on_ground = False; sp.player.air_top = sp.player.y; sp.player.vy = 0.0
+    for _ in range(30):
+        sp.update(1 / 30)
+        if sp.player.on_ground:
+            break
+    waves = [b for b in sp.bullets if b.kind == "wave" and b.owner == "player"]
+    assert len(waves) == 2 and {b.vx for b in waves} == {380.0, -380.0}, [(b.vx, b.dmg, b.ttl) for b in waves]
+    assert all(b.dmg == 2 and b.pierce and 0.5 < b.ttl <= 0.6 for b in waves), [(b.dmg, b.ttl) for b in waves]   # ttl ticked once
+    _run(sp, 0.1)
+    assert sum(1 for b in sp.bullets if b.kind == "wave" and b.owner == "player") <= 2, "no new wave while standing"
+    assert st.hp == 98 and waves[0].hit is waves[1].hit == {st.id}, "a straddling enemy takes d once (shared hit set)"
+    sp.enemies = []
+    sp.bullets = [Bullet(0, 0, 1, 1, 0, 0, "player", ttl=5.0) for _ in range(MAX_BULLETS)]
+    sp.player.y = sp.ground_y - 120.0; sp.player.on_ground = False; sp.player.air_top = sp.player.y; sp.player.vy = 0.0
+    for _ in range(30):
+        sp.update(1 / 30)
+        if sp.player.on_ground:
+            break
+    assert sp.player.on_ground and len(sp.bullets) <= MAX_BULLETS and not any(b.kind == "wave" for b in sp.bullets), "stomp respects MAX_BULLETS"
+    _check_snapshot(sp.snapshot())
+    bk = _fresh("jaehwi", 135); bk.player.inv_t = 99.0
+    _gear(bk, "weapon", "unique", ["boss_killer", "crit"])
+    bz = bk._make_enemy("teamlead", bk.player.x + 300, boss=True); bz.intro = False
+    grunt = bk._make_enemy("staff", bk.player.x + 300)
+    assert bk._boss_dmg(bz, 10) == 14 and bk._boss_dmg(grunt, 10) == 10
+    crits = sum(1 for _ in range(2000) if bk._crit(1, 0.0, 0.0) == 2)
+    assert 300 < crits < 500, crits              # 20 % x2
+    bz.hp = bz.hp_max = 10 ** 9; bk.enemies = [bz]
+    dealt = {}; crit_txt = {}
+    for who in ("ally", "player"):
+        dealt[who] = crit_txt[who] = 0
+        for _ in range(200):                      # exactly the drone shape (dmg 1 missile), ally-flagged or not
+            b = Bullet(bz.x, bz.y - bz.h / 2, 8, 4, 0.0, 0.0, "player", dmg=1, kind="missile", ttl=4.0, ally=(who == "ally"))
+            bk.bullets = [b]; bk.effects.clear(); hp0 = bz.hp
+            bk._collide()
+            dealt[who] += hp0 - bz.hp
+            crit_txt[who] += sum(1 for f in bk.effects if f["kind"] == "text" and f.get("text") == "크리!")
+    assert dealt["ally"] == 200 and crit_txt["ally"] == 0, "ally (decoy / drone) shots never crit nor boss_killer"
+    assert dealt["player"] > 200 and crit_txt["player"] > 0, (dealt, crit_txt)
+    dw = _fresh("jaehwi", 138); dw.player.inv_t = 99.0
+    dw._use_item("decoy"); dw._use_item("drone")
+    tgt = dw._make_enemy("staff", dw.player.x + 200); tgt.fire_rate = 0.0; tgt.speed = 0.0; tgt.hp = 10 ** 6; dw.enemies = [tgt]
+    seen = {True: 0, False: 0}
+    for _ in range(45):
+        dw.update(1 / 30)
+        for b in dw.bullets:
+            if b.owner == "player" and not b.dead:
+                seen[b.ally] += 1
+    assert seen[True] > 0 and seen[False] == 0, "decoy / drone shots are ally-flagged"
+    bk.effects.clear()
+    bk.warehouse.equipped["weapon"] = None; bk._refresh_perks()
+    assert bk._crit(1, 0.0, 0.0) == 1 and bk._boss_dmg(bz, 10) == 10 and not bk.effects
+    ll = _fresh("jaehwi", 136); ll.player.inv_t = 99.0
+    _gear(ll, "hat", "unique", ["loot_luck", "second_wind"])
+    drops = 0
+    for _ in range(400):
+        ll.items.clear()
+        vic = ll._make_enemy("staff", ll.player.x + 300); ll.enemies = [vic]
+        ll._damage_enemy(vic, 10 ** 6)
+        drops += sum(1 for it in ll.items if it.kind != "coin")
+    base = float(ll.progression["drop_grunt"])
+    assert 400 * base * 1.5 < drops < 400 * base * 2.6, (drops, base)   # 0.10 -> 0.20 (x2.0)
+    # haggler in town: the store view and the 강화 handler price with self.perks; equip inside the town reprices at once
+    hg = _fresh("jaehwi", 137, stage=5, money=10 ** 6)
+    hg._stage_clear(); _run(hg, CLEAR_TO_SHOP + 0.1)
+    assert hg.state == "town"
+    hat_ = economy.make_equipment(random.Random(3), "hat", "rare", 5, 5)
+    hg.warehouse.equipped["hat"] = dict(hat_, perks=[])
+    full_ = economy.enhance_cost(hat_)
+    hg._refresh_perks()
+    assert hg.snapshot()["hud"]["town"]["store"]["enhance_cost"]["hat"] == full_
+    _gear(hg, "acc", "unique", ["haggler", "magnet"])
+    sv = hg.snapshot()["hud"]["town"]["store"]
+    assert sv["enhance_cost"]["hat"] == economy.enhance_cost(hat_, {"haggler": 2}) < full_ and sv["perks"] == {"haggler": 2, "magnet": 2}
+    assert sv["perk_labels"]["haggler"] == "강화 할인" and sv["perk_ui"]["haggler"]["unique"] == "강화비 x0.65"
+    assert sv["perk_excluded"] == ["ult_haste", "ult_time"] and sv["perk_desc"]["magnet"]
+    hg.town["tab"] = TOWN_TABS.index("store"); hg.town["store_mode"] = "equipped"
+    hg.town["index"]["store"] = list(economy.SLOTS).index("hat")
+    hg.state_t = 1.0
+    m_h = hg.money
+    hg.key_down("skill"); hg.key_up("skill")
+    assert hg.warehouse.equipped["hat"]["level"] == 6 and hg.money == m_h - economy.enhance_cost(hat_, {"haggler": 2}), hg.town["msg"]
+    hg.town["index"]["store"] = list(economy.SLOTS).index("acc")
+    hg.key_down("confirm"); hg.key_up("confirm")             # unequip the acc -> full price again
+    assert hg.warehouse.equipped["acc"] is None and hg.perks == {} and hg.snapshot()["hud"]["town"]["store"]["enhance_cost"]["hat"] == economy.enhance_cost(hg.warehouse.equipped["hat"])
+    _check_snapshot(hg.snapshot())
     print("PASS 20: inventory, melee styles, enemy melee, allies, bomb/coffee, typing words, money, difficulty,"
-          " boss odds, gravity bombs, town, save, balance log")
+          " boss odds, gravity bombs, town, save, balance log, perks (rank cache, character mask, every hook)")
 
     dtms = (time.perf_counter() - t0) * 1000
     print(f"SELFTEST OK ({dtms:.0f} ms)")

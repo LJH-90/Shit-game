@@ -947,6 +947,7 @@
       }
     }
   },
+  "_comment_difficulty": "legacy: unused since v1.9 (the select-screen difficulty drives game.py DIFF_MULT). v2.0: easy / normal come from \"curve\" below (game.py DIFF_CURVE); hard / harder / hell / crazy have no entry on purpose and keep the DIFF_MULT formula.",
   "difficulty": {
     "easy": {
       "hp": 0.8,
@@ -962,6 +963,32 @@
       "hp": 1.6,
       "speed": 1.25,
       "count": 1.4
+    }
+  },
+  "curve": {
+    "easy": {
+      "hp": 0.7,
+      "speed": 0.8,
+      "count": 0.85,
+      "proj": 0.7,
+      "money": 0.85,
+      "warmup": {"1": 0.65, "2": 0.8, "3": 0.92},
+      "count_warmup": {"1": 0.75, "2": 0.85, "3": 0.95},
+      "hp_per_stage": 0.22,
+      "boss_hp_per_stage": 0.08,
+      "speed_cap": 2.2
+    },
+    "normal": {
+      "hp": 1.0,
+      "speed": 1.0,
+      "count": 1.0,
+      "proj": 1.0,
+      "money": 1.0,
+      "warmup": {"1": 0.8, "2": 0.9, "3": 1.0},
+      "count_warmup": {"1": 0.85, "2": 0.95, "3": 1.0},
+      "hp_per_stage": 0.28,
+      "boss_hp_per_stage": 0.08,
+      "speed_cap": 2.6
     }
   },
   "wave": {
