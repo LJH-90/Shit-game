@@ -109,10 +109,17 @@ TOWN_TAB_LABEL = {"stat": "스탯 강화", "shop": "장비 상점", "store": "�
 GAMBLE_GAMES = ("강화 도박", "더블업", "슬롯")
 DOUBLE_STAKES = (0.10, 0.25, 0.50)      # fraction of money staked per 더블업 round
 SLOT_BETS = (100, 500, 2000)
-TOWN_HINT = {"stat": "←→ 항목 · Enter 구매 · Tab 탭",
-             "shop": "←→ 항목 · Enter 구매 · Tab 탭",
-             "store": "←→ 항목 · Enter 장착/해제 · C 판매(창고)/강화(장착) · ↑↓ 줄 전환 · Tab 탭",
-             "gamble": "←→ 게임 · Enter 플레이 · C 대상/배팅 변경 · Tab 탭"}
+TOWN_HINT = {"stat": "↑↓ 항목 · Enter 구매 · Tab 탭",
+             "shop": "↑↓ 선반 · ←→ 상품 · Enter 구매 · Tab 탭",
+             "store": "↑↓ 선반 · ←→ 카드 · Enter 장착/해제 · C 판매(카드)/강화(장착 카드) · Tab 탭",
+             "gamble": "↑↓ 게임 · Enter 플레이 · C 대상/배팅 변경 · Tab 탭"}
+# v2.1 town shelves: 6 shelves in body order (top -> bottom), each = equipped card + that slot's cards
+SHELF_ORDER = ("hat", "acc", "suit", "gloves", "weapon", "shoes")
+SLOT_EFFECT_LABEL = {"shield": "실드", "rate": "연사", "magic": "마법", "speed": "이동", "damage": "물리", "money": "돈"}
+PCT_EFFECTS = ("rate", "speed", "money")          # compare rows carry fractions (0.10 = 10%) with fmt "pct"
+STAT_ROW_LABEL = {"str": "힘", "agi": "민첩", "int": "지혜", "rate": "연사", "shield": "실드", "life": "목숨"}   # 스탯 탭 compare.slot_label
+TOWN_CARDS_VISIBLE = 3                            # cards 1..3 of a shelf are visible; the window slides with the cursor
+PERK_OFF_SUFFIX = " (미적용)"                      # appended to perk labels / texts the current character cannot use (town cards / compare)
 DEFAULT_PROGRESSION = {"hp_per_stage": 0.35, "boss_hp_per_stage": 0.08, "drop_grunt": 0.10, "drop_elite": 0.30}
 
 # --- v1.6: stats / elements / mid bosses
@@ -195,7 +202,7 @@ DEFAULT_WAVE = {"base_count": 3, "per_wave": 1, "per_stage": 0.35, "per_cycle": 
 DEFAULT_CHAR = {"name": "?", "trait": "", "damage": 1.0, "speed": 1.0, "fire_rate": 1.0,
                 "jump": 1.0, "pierce": False}
 
-CONFIRM_GUARD = 0.25      # s after a state change during which confirm/fire is ignored (Space = confirm+fire)
+CONFIRM_GUARD = 0.25      # s after a state change during which confirm/fire is ignored (Enter = confirm, Space/X = fire; both confirm in menus)
 
 
 # ---------------------------------------------------------------- helpers
@@ -478,6 +485,15 @@ class Ally(_Ent):
 
 
 # ---------------------------------------------------------------- world
+def _to_int(v, default: int = 0) -> int:
+    """int() for save-file fields: a non-numeric string / None (hand-edited cache.dat) falls back to default instead
+    of raising ValueError in World.__init__ (which the --noconsole exe would turn into a silent exit)."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
 class World:
     """See INTERFACES.md section C."""
 
@@ -553,8 +569,8 @@ class World:
 
         # --- save / persistent
         save = save or {}
-        self.best = int(save.get("best", 0) or 0)
-        self.save_stage = int(save.get("stage", 1) or 1)
+        self.best = max(0, _to_int(save.get("best"), 0))
+        self.save_stage = _to_int(save.get("stage"), 1) or 1
         self.continue_stage = self.save_stage if self.save_stage > 1 else None
         self.select_index = 0
         sc = save.get("char")
@@ -567,7 +583,7 @@ class World:
             self.element_index = ELEMENT_KEYS.index(save["element"])
         self.unlocked: set[str] = {k for k in (save.get("unlocked") or []) if k in CHAR_KEYS}
         # v1.9 meta progression (kept across game overs): money, warehouse, difficulty, clears, inventory
-        self.money = max(0, int(save.get("money", 0) or 0))
+        self.money = max(0, _to_int(save.get("money"), 0))
         self.warehouse = economy.Warehouse(save.get("warehouse") if isinstance(save.get("warehouse"), dict) else None)
         # v2.0 perks: {key: rank} cache of the equipped rare+ gear (refreshed on load / stage start / town changes,
         # never per frame), character mask, per-stage charges (second_wind flag, pit_save count), last floor x
@@ -580,14 +596,14 @@ class World:
         self.best_clear: dict[str, int] = {}
         for k, v in (save.get("best_clear") or {}).items():
             if k in DIFFICULTIES:
-                self.best_clear[k] = max(0, int(v))
+                self.best_clear[k] = max(0, _to_int(v))
         self.difficulty_index = DIFFICULTIES.index(save["difficulty"]) if save.get("difficulty") in DIFFICULTIES else 1
         if self._diff_locked(self.difficulty_key):
             self.difficulty_index = 1
         self.inventory: list[dict | None] = [None] * INV_SLOTS
         for i, it in enumerate((save.get("inventory") or [])[:INV_SLOTS]):
             if isinstance(it, dict) and it.get("kind") in ITEM_KINDS and it.get("kind") != "coin":
-                self.inventory[i] = {"kind": it["kind"], "count": max(1, min(INV_STACK_MAX, int(it.get("count", 1))))}
+                self.inventory[i] = {"kind": it["kind"], "count": max(1, min(INV_STACK_MAX, _to_int(it.get("count", 1), 1)))}
         self.inv_flash: int | None = None
         self.inv_flash_t = 0.0
         self.allies: list[Ally] = []
@@ -603,7 +619,7 @@ class World:
         self.shop_stock: list[dict] = []        # equipment stock of the current town (refreshed every town)
         self.shop_stock_stage = 0
         self.saved_upgrades = dict(save.get("upgrades") or {})
-        self.saved_equip = {k: int(v) for k, v in (save.get("equip") or {}).items() if k in EQUIP_ORDER}
+        self.saved_equip = {k: _to_int(v) for k, v in (save.get("equip") or {}).items() if k in EQUIP_ORDER}
         self.shop_items = {k: list(v) for k, v in DEFAULT_SHOP.items()}
         for k, v in (self.config.get("shop") or {}).items():
             if k in self.shop_items and isinstance(v, dict):
@@ -1205,11 +1221,11 @@ class World:
             for k, v in self.saved_upgrades.items():
                 if k in self.upgrades:
                     mx = self.shop_items[k][3]
-                    self.upgrades[k] = max(0, int(v)) if mx <= 0 else max(0, min(int(v), mx))
+                    self.upgrades[k] = max(0, _to_int(v)) if mx <= 0 else max(0, min(_to_int(v), mx))
             for k, v in self.saved_equip.items():
                 if k in self.equip:
                     mx = self._equip_max(k)
-                    self.equip[k] = max(0, int(v)) if mx <= 0 else max(0, min(int(v), mx))   # v2.0: clamp to "max"
+                    self.equip[k] = max(0, _to_int(v)) if mx <= 0 else max(0, min(_to_int(v), mx))   # v2.0: clamp to "max"
         self._start_stage(stage_no)
 
     def _start_stage(self, n: int):
@@ -1816,7 +1832,7 @@ class World:
         return {"index": self.shop_index % len(SHOP_ORDER), "items": rows, "msg": self.shop_msg,
                 "stats": self._eff_stats(self.char)}
 
-    # ------------------------------------------------------------ town (v1.9: every 5th stage)
+    # ------------------------------------------------------------ town (v1.9: every 5th stage; v2.1: shelf cursor)
     def _open_town(self):
         if self.shop_stock_stage != self.stage_no and hasattr(economy, "make_shop_stock"):
             self.shop_stock = list(economy.make_shop_stock(self.rng, self.stage_no, 10, exclude=self._perk_exclusions()))
@@ -1824,62 +1840,138 @@ class World:
         self.shop_index = 0
         self.shop_msg = ""
         self.town = {"tab": 0, "index": {k: 0 for k in TOWN_TABS}, "msg": "", "store_mode": "list",
-                     "game": 0, "stake_i": 0, "bet_i": 0, "streak": 0, "reels": None, "target": 0}
+                     "game": 0, "stake_i": 0, "bet_i": 0, "streak": 0, "reels": None, "target": 0,
+                     # v2.1 cursor model: one {"row", "col"} per tab (town["cursor"] IS the current tab's dict),
+                     # the last col of every row and the first visible card of every shelf are remembered per tab
+                     "cursors": {k: {"row": 0, "col": 0} for k in TOWN_TABS},
+                     "col_mem": {k: {} for k in TOWN_TABS}, "window": {k: {} for k in TOWN_TABS}}
+        self.town["cursor"] = self.town["cursors"][TOWN_TABS[0]]
         self._set_banner(None)
         self._set_state("town")
+        self._town_clamp()
 
     def _town_tab(self) -> str:
         return TOWN_TABS[self.town["tab"] % len(TOWN_TABS)]
 
     def _town_list(self, tab: str) -> list:
-        """Selectable entries of a tab; the last is always ("next", None)."""
+        """Cursor rows of a tab: ("stat", key) | ("shelf", slot) | ("box", None) | ("game", i);
+        the last row is always ("next", None). Shelves are in SHELF_ORDER (body order)."""
         if tab == "stat":
             rows = [("stat", k) for k in SHOP_ORDER if k != "next"]
         elif tab == "shop":
-            rows = [("eq", i) for i in range(len(self.shop_stock))] + [("box", None)]
+            rows = [("shelf", sl) for sl in SHELF_ORDER] + [("box", None)]
         elif tab == "store":
-            if self.town["store_mode"] == "equipped":
-                rows = [("slot", sl) for sl in economy.SLOTS]
-            else:
-                rows = [("item", i) for i in range(len(self.warehouse.items))]
+            rows = [("shelf", sl) for sl in SHELF_ORDER]
         else:
             rows = [("game", i) for i in range(len(GAMBLE_GAMES))]
         rows.append(("next", None))
         return rows
 
-    def _town_key(self, key: str):
+    @staticmethod
+    def _shelf_sort_key(pair: tuple) -> tuple:
+        idx, eq = pair
+        rank = getattr(economy, "RARITY_RANK", {"normal": 0, "rare": 1, "unique": 2}).get(eq.get("rarity"), 0)
+        return (-int(rank), -int(eq.get("level", 0) or 0), str(eq.get("name", "")), idx)
+
+    def _shelf_entries(self, tab: str, slot: str) -> list:
+        """[(index, eq)] of one shelf = warehouse items (store) / shop stock (shop) of `slot`,
+        rarity desc, level desc, name asc. index = position in warehouse.items / shop_stock."""
+        src = self.warehouse.items if tab == "store" else (self.shop_stock if tab == "shop" else [])
+        out = [(i, e) for i, e in enumerate(src) if isinstance(e, dict) and e.get("slot") == slot]
+        out.sort(key=self._shelf_sort_key)
+        return out
+
+    def _town_cols(self, tab: str, row: int) -> tuple:
+        """(number of cols, first selectable col) of a row. Shelf col 0 = equipped card; the shop's col 0 is
+        the 비교 기준 card that the cursor skips (first selectable = 1 when the shelf has stock)."""
+        rows = self._town_list(tab)
+        kind, arg = rows[row % len(rows)]
+        if kind != "shelf":
+            return 1, 0
+        n = len(self._shelf_entries(tab, arg))
+        if tab == "shop":
+            return 1 + n, (1 if n else 0)
+        return 1 + n, 0
+
+    def _town_default_col(self, tab: str, row: int) -> int:
+        """Col of a row that was never visited: the equipped card, or card 1 when the slot is empty but stocked."""
+        rows = self._town_list(tab)
+        kind, arg = rows[row % len(rows)]
+        if kind != "shelf":
+            return 0
+        n = len(self._shelf_entries(tab, arg))
+        if tab == "shop":
+            return 1 if n else 0
+        return 0 if (self.warehouse.equipped.get(arg) is not None or n == 0) else 1
+
+    def _town_clamp(self):
+        """Keep the cursor on a real row / col, remember the col per row, slide the shelf window so the
+        cursor card stays among the TOWN_CARDS_VISIBLE visible cards. Idempotent; safe after any mutation."""
         t = self.town
         if t is None:
             return
         tab = self._town_tab()
+        cur = t["cursors"][tab]
+        t["cursor"] = cur
         rows = self._town_list(tab)
-        idx = t["index"][tab] % len(rows)
-        if key == "tab" or (key in ("up", "down") and tab in ("stat", "shop")):
-            t["tab"] = (t["tab"] + (-1 if key == "up" else 1)) % len(TOWN_TABS)
+        cur["row"] = int(cur.get("row", 0)) % len(rows)
+        mem = t["col_mem"][tab]
+        if cur["row"] not in mem:
+            cur["col"] = self._town_default_col(tab, cur["row"])
+        ncols, first = self._town_cols(tab, cur["row"])
+        cur["col"] = max(first, min(ncols - 1, int(cur.get("col", 0))))
+        mem[cur["row"]] = cur["col"]
+        win = t["window"][tab]
+        w = int(win.get(cur["row"], 0))
+        if cur["col"] >= 1:
+            c = cur["col"] - 1
+            w = max(min(w, c), c - (TOWN_CARDS_VISIBLE - 1))
+        win[cur["row"]] = max(0, min(w, max(0, ncols - 1 - TOWN_CARDS_VISIBLE)))
+        t["index"][tab] = cur["row"]
+        t["store_mode"] = "equipped" if (tab == "store" and cur["col"] == 0) else "list"
+
+    def _town_key(self, key: str):
+        t = self.town
+        if t is None:
+            return
+        self._town_clamp()
+        tab = self._town_tab()
+        rows = self._town_list(tab)
+        cur = t["cursor"]
+        row = rows[cur["row"]]
+        if key == "tab":
+            t["tab"] = (t["tab"] + 1) % len(TOWN_TABS)
             t["msg"] = ""
-        elif key in ("up", "down") and tab == "store":
-            t["store_mode"] = "equipped" if t["store_mode"] == "list" else "list"
-            t["index"]["store"] = 0
-        elif key in ("up", "down") and tab == "gamble":
-            t["index"]["gamble"] = (idx + (-1 if key == "up" else 1)) % len(rows)
-        elif key in ("left", "sel_left"):
-            t["index"][tab] = (idx - 1) % len(rows)
+        elif key in ("up", "down") or (key in ("left", "right", "sel_left", "sel_right") and tab in ("stat", "gamble")):
+            step = -1 if key in ("up", "left", "sel_left") else 1          # rows wrap on every tab
+            t["col_mem"][tab][cur["row"]] = cur["col"]
+            cur["row"] = (cur["row"] + step) % len(rows)
+            cur["col"] = t["col_mem"][tab].get(cur["row"], self._town_default_col(tab, cur["row"]))
             t["msg"] = ""
-        elif key in ("right", "sel_right"):
-            t["index"][tab] = (idx + 1) % len(rows)
+        elif key in ("left", "right", "sel_left", "sel_right"):
+            ncols, first = self._town_cols(tab, cur["row"])                 # cols wrap inside the row
+            span = ncols - first
+            if span > 1:
+                step = -1 if key in ("left", "sel_left") else 1
+                cur["col"] = first + (cur["col"] - first + step) % span
+            t["msg"] = ""
+        elif key == "escape":                   # Esc = jump onto the "다음 스테이지" row (select only: Enter confirms)
+            t["col_mem"][tab][cur["row"]] = cur["col"]
+            cur["row"] = len(rows) - 1
+            cur["col"] = 0
             t["msg"] = ""
         elif key == "skill":
-            self._town_alt(tab, rows[idx])
+            self._town_alt(tab, row)
         elif key in ("confirm", "fire") and self.state_t >= CONFIRM_GUARD:
-            self._town_confirm(tab, rows[idx])
+            self._town_confirm(tab, row)
         if self.town is None:                   # "다음" closed the town (from any tab): nothing left to clamp
             return
-        if tab == "store" and t["index"]["store"] >= len(self._town_list("store")):
-            t["index"]["store"] = max(0, len(self._town_list("store")) - 1)
+        self._town_clamp()
 
     def _town_confirm(self, tab: str, row: tuple):
         t = self.town
         kind, arg = row
+        col = int(t["cursor"]["col"])
         if kind == "next":
             self.town = None
             self._start_stage(self.stage_no + 1)
@@ -1887,18 +1979,52 @@ class World:
         if kind == "stat":
             self._shop_select(arg)
             t["msg"] = self.shop_msg
-        elif kind == "eq":
-            eq = self.shop_stock[arg]
+        elif kind == "shelf" and tab == "store":
+            if col == 0:                                        # equipped card: 해제
+                eq = self.warehouse.equipped.get(arg)
+                if eq is None:
+                    t["msg"] = "빈 슬롯"
+                elif self.warehouse.unequip(arg):
+                    t["msg"] = f"{eq['name']} 해제 → 창고 {len(self.warehouse.items)}/{self.warehouse.CAP}"
+                    self._refresh_perks()
+                    self.player.shield = min(self.player.shield, self._shield_max())
+                else:
+                    t["msg"] = "창고가 가득 찼습니다"
+            else:                                               # warehouse card: 장착 (swap with the equipped one)
+                entries = self._shelf_entries(tab, arg)
+                idx, eq = entries[min(col, len(entries)) - 1]
+                old = self.warehouse.equipped.get(arg)
+                new = self.warehouse.equip(idx)
+                if new is None:
+                    t["msg"] = "장착 실패"
+                else:
+                    t["msg"] = f"장착: {new['name']}" + (f" (해제: {old['name']} → 창고)" if old else "")
+                    self._refresh_perks()
+                self.player.shield = min(self.player.shield, self._shield_max())
+        elif kind == "shelf":                                   # shop: 구매
+            entries = self._shelf_entries(tab, arg)
+            if col < 1 or col - 1 >= len(entries):
+                t["msg"] = f"{economy.SLOT_LABEL[arg]} 재고 없음"
+                return
+            idx, eq = entries[col - 1]
             price = int(economy.buy_price(eq, self.stage_no))
             if self.money < price:
                 t["msg"] = f"돈 부족 (₩{price - self.money:,} 모자람)"
+            elif self.warehouse.equipped.get(arg) is None:      # empty slot: straight onto the body, say so
+                self.money -= price
+                self.shop_stock.pop(idx)
+                self._bal_add("spent", price)
+                self.warehouse.equipped[arg] = eq
+                self._refresh_perks()
+                self.player.shield = min(self.player.shield, self._shield_max())
+                t["msg"] = f"구매 · 바로 장착: {eq['name']} (₩{price:,})"
             elif not self.warehouse.add(eq):
                 t["msg"] = "창고가 가득 찼습니다"
             else:
                 self.money -= price
-                self.shop_stock.pop(arg)
-                t["msg"] = f"구매: {eq['name']} (₩{price:,})"
+                self.shop_stock.pop(idx)
                 self._bal_add("spent", price)
+                t["msg"] = f"구매: {eq['name']} (₩{price:,}) → 창고 {len(self.warehouse.items)}/{self.warehouse.CAP}"
         elif kind == "box":
             price = int(economy.BOX_PRICE(self.stage_no))
             if self.money < price:
@@ -1925,19 +2051,6 @@ class World:
                 t["msg"] = f"랜덤박스: ₩{int(res.get('money', 0)):,}!"
             else:
                 t["msg"] = f"랜덤박스: {res.get('text', '꽝')}"
-        elif kind == "item":
-            eq = self.warehouse.equip(arg)
-            t["msg"] = f"장착: {eq['name']}" if eq else "장착 실패"
-            self._refresh_perks()
-            self.player.shield = min(self.player.shield, self._shield_max())
-        elif kind == "slot":
-            if self.warehouse.equipped.get(arg) is None:
-                t["msg"] = "빈 슬롯"
-            elif self.warehouse.unequip(arg):
-                t["msg"] = f"{economy.SLOT_LABEL[arg]} 해제"
-                self._refresh_perks()
-            else:
-                t["msg"] = "창고가 가득 찼습니다"
         elif kind == "game":
             self._town_gamble(arg)
 
@@ -1971,17 +2084,21 @@ class World:
         return float(self._perk(key) or 1.0)
 
     def _town_alt(self, tab: str, row: tuple):
-        """C key: sell (warehouse list) / 강화 = deterministic +1 (equipped row) / change target, stake or bet."""
+        """C key: store col 0 = 강화 (deterministic +1, rarity-scaled cost) / store col>0 = 판매 /
+        gamble = change target, stake or bet. No action on the stat / shop tabs."""
         t = self.town
         kind, arg = row
-        if tab == "store" and kind == "item":
-            eq = self.warehouse.remove(arg)
+        col = int(t["cursor"]["col"])
+        if tab == "store" and kind == "shelf" and col > 0:
+            entries = self._shelf_entries(tab, arg)
+            idx, _eq = entries[min(col, len(entries)) - 1]
+            eq = self.warehouse.remove(idx)
             gain = int(economy.sell_price(eq, self.stage_no))
             self.money += gain
             self._bal_add("money", gain)
             t["msg"] = f"판매: {eq['name']} +₩{gain:,}"
             self._refresh_perks()
-        elif tab == "store" and kind == "slot":
+        elif tab == "store" and kind == "shelf":
             eq = self.warehouse.equipped.get(arg)
             if eq is None:
                 t["msg"] = "빈 슬롯"
@@ -2060,15 +2177,324 @@ class World:
                     self._bal_add("money", gain)
             elif prize and prize.get("kind") == "item" and prize.get("item"):
                 self._pickup(prize["item"])
-            t["msg"] = str(res.get("text", ""))
+            t["msg"] = t["slot_text"] = str(res.get("text", ""))   # slot_text survives navigation (card payout line)
         self._bal_add("gambles", 1)
+
+    # ------------------------------------------------------------ town view (v2.1 shelves / compare / legend)
+    @staticmethod
+    def _fx_num(v, key: str):
+        """Effect value as a plain number: ints for INT_EFFECTS / stats, 3-decimal fractions for pct keys."""
+        if key in getattr(economy, "INT_EFFECTS", ("shield", "magic", "damage")) or key in ("str", "agi", "int"):
+            return int(round(float(v)))
+        return round(float(v), 3)
+
+    @staticmethod
+    def _cmp_row(label: str, now, after, fmt: str = "int") -> dict:
+        """One compare row: delta = after - now (None when nothing changes or the cells are strings)."""
+        delta = None
+        if isinstance(now, (int, float)) and isinstance(after, (int, float)):
+            d = after - now
+            d = round(d, 3) if fmt == "pct" else int(round(d))
+            delta = d if abs(d) > 1e-9 else None
+        return {"label": label, "now": now, "after": after, "delta": delta, "fmt": fmt}
+
+    def _perk_texts(self, eq: dict) -> tuple:
+        """([label], [ui text]) of a gear's perks; the text is the rank's "ui" string (rank never below the perk's min).
+        A perk the current character cannot use (self._perk_ex, e.g. ult_time without a "storm") gets PERK_OFF_SUFFIX on
+        both strings so the town never promises a perk _perk() will mask; the renderer greys such chips."""
+        table = getattr(economy, "PERKS", {}) or {}
+        ranks = getattr(economy, "RARITY_RANK", {"normal": 0, "rare": 1, "unique": 2})
+        labels, texts = [], []
+        for p in (eq.get("perks") or []):
+            info = table.get(p)
+            off = PERK_OFF_SUFFIX if p in self._perk_ex else ""
+            if not isinstance(info, dict):
+                labels.append(str(p) + off)
+                texts.append(off.strip())
+                continue
+            r = max(int(ranks.get(eq.get("rarity"), 0)), int(ranks.get(info.get("min", "rare"), 1)))
+            rarity = economy.RARITY[max(0, min(len(economy.RARITY) - 1, r))]
+            ui = info.get("ui") if isinstance(info.get("ui"), dict) else {}
+            labels.append(str(info.get("label", p)) + off)
+            texts.append(str(ui.get(rarity) or info.get("label", p)) + off)
+        return labels, texts
+
+    def _owned_in_slot(self, slot: str) -> int:
+        return sum(1 for e in self.warehouse.items if e.get("slot") == slot) + (1 if self.warehouse.equipped.get(slot) else 0)
+
+    def _card_view(self, eq: dict, tab: str, slot: str, equipped: dict | None, is_equipped: bool, idx: int | None,
+                   perks: dict) -> dict:
+        """eq_view: the equipment dict + price / enhance / delta_effect / delta_stats / perk_labels / perk_texts /
+        is_equipped / owned / afford / idx. Deltas are vs the equipped item of the shelf (the equipped card itself
+        carries its absolute values: now 0 -> after value)."""
+        key = economy.SLOT_EFFECT[slot][0] if slot in economy.SLOT_EFFECT else "shield"
+        fx = economy.equip_effect(eq)
+        base = economy.equip_effect(equipped) if (equipped and not is_equipped) else economy.equip_effect(None)
+        v = dict(eq)
+        v["stats"] = dict(eq.get("stats") or {})
+        v["perks"] = list(eq.get("perks") or [])
+        if tab == "shop":
+            v["price"] = None if is_equipped else int(economy.buy_price(eq, self.stage_no))
+        else:
+            v["price"] = int(economy.sell_price(eq, self.stage_no))
+        v["enhance"] = int(economy.enhance_cost(eq, perks)) if (tab == "store" and is_equipped) else None
+        v["delta_effect"] = {"key": key, "now": self._fx_num(base[key], key), "after": self._fx_num(fx[key], key)}
+        v["delta_stats"] = {k: int(fx[k] - base[k]) for k in ("str", "agi", "int")}
+        v["perk_labels"], v["perk_texts"] = self._perk_texts(eq)
+        v["is_equipped"] = bool(is_equipped)
+        v["owned"] = self._owned_in_slot(slot) if tab == "shop" else 0
+        v["afford"] = (self.money >= v["price"]) if isinstance(v["price"], int) else True
+        v["idx"] = idx
+        return v
+
+    def _shelf_view(self, tab: str, slot: str, perks: dict) -> dict:
+        t = self.town
+        entries = self._shelf_entries(tab, slot)
+        equipped = self.warehouse.equipped.get(slot)
+        key = economy.SLOT_EFFECT[slot][0] if slot in economy.SLOT_EFFECT else "shield"
+        row = SHELF_ORDER.index(slot)
+        n = len(entries)
+        w = max(0, min(int(t["window"][tab].get(row, 0)), max(0, n - TOWN_CARDS_VISIBLE)))
+        eq_view = self._card_view(equipped, tab, slot, equipped, True, None, perks) if equipped else None
+        cards = [eq_view] + [self._card_view(e, tab, slot, equipped, False, i, perks) for i, e in entries]
+        return {"slot": slot, "label": economy.SLOT_LABEL.get(slot, slot), "effect_key": key,
+                "effect_label": SLOT_EFFECT_LABEL.get(key, key), "count": n, "window": w,
+                "equipped": eq_view, "cards": cards}
+
+    def _town_stats_now(self) -> dict:
+        s = self._eff_stats(self.char) or {}
+        return {k: int(s.get(k, 0) or 0) for k in ("str", "agi", "int")}
+
+    def _town_compare(self, tab: str, rows: list, cur: dict) -> dict | None:
+        """비교표 for the cursor: 4 rows 힘/민첩/지혜/<slot effect> (gear) or the tab's own ladder (stat / gamble / box / next).
+        None when the cursor rests on a ghost (empty slot) or an empty shop shelf."""
+        t = self.town
+        kind, arg = rows[cur["row"]]
+        col = int(cur["col"])
+        money, score, stage = int(self.money), int(self.score), int(self.stage_no)
+        used, cap = len(self.warehouse.items), self.warehouse.CAP
+        n_eq = sum(1 for v in self.warehouse.equipped.values() if v)
+        R = self._cmp_row
+        base = {"name": "", "rarity": None, "level": None, "slot": None, "slot_label": None, "action": "next",
+                "rows": [], "perks": [], "sell": None, "enhance": None, "buy": None, "after_msg": ""}
+        if kind == "next":
+            nxt = ((stage // TOWN_EVERY) + 1) * TOWN_EVERY
+            base.update(name="다음 스테이지", rows=[R("스테이지", stage, stage + 1), R("₩", money, money),
+                                               R("창고", used, used), R("장착", n_eq, n_eq)],
+                        after_msg=f"{stage + 1}스테이지 시작 · 다음 마을은 {nxt}스테이지 클리어 후")
+            return base
+        if kind == "stat":
+            label, _b, _g, mx = self.shop_items[arg]
+            lv = int(self.upgrades.get(arg, 0))
+            cost = self._shop_cost(arg)
+            maxed = mx > 0 and lv >= mx
+            s = self._town_stats_now()
+            inc = 0 if maxed else 1
+            rws = [R("힘", s["str"], s["str"] + (inc if arg == "str" else 0)),
+                   R("민첩", s["agi"], s["agi"] + (inc if arg == "agi" else 0)),
+                   R("지혜", s["int"], s["int"] + (inc if arg == "int" else 0))]
+            if arg == "rate":
+                rws.append(R("연사", round(0.2 * lv, 3), round(0.2 * (lv + inc), 3), "pct"))
+            elif arg == "shield":
+                sm = self._shield_max()
+                rws.append(R("실드", sm, sm + inc))
+            elif arg == "life":
+                rws.append(R("목숨", int(self.lives), min(9, int(self.lives) + inc)))
+            else:
+                rws.append(R("점수", score, score - (0 if maxed else cost)))
+            if maxed:
+                msg = f"{label}: 최대 단계"
+            elif score >= cost:
+                msg = f"점수 {score:,} → {score - cost:,}"
+            else:
+                msg = f"점수 부족 ({cost - score:,}점 모자람)"
+            base.update(name=label, level=lv, slot=arg, slot_label=STAT_ROW_LABEL.get(arg, label), action="stat", rows=rws,
+                        buy=(0 if maxed else cost), after_msg=msg)       # slot = stat key so the renderer picks its hue / glyph
+            return base
+        if kind == "box":
+            price = int(economy.BOX_PRICE(self.stage_no)) if hasattr(economy, "BOX_PRICE") else 0
+            odds = getattr(economy, "BOX_OUTCOME", {"equip": 0.6, "item": 0.25, "money": 0.1, "dud": 0.05})
+            pc = lambda k: f"{int(round(float(odds.get(k, 0)) * 100))}%"
+            base.update(name="랜덤박스", action="box", buy=price,
+                        rows=[R("₩", money, money - price), R("장비", "-", pc("equip")), R("아이템", "-", pc("item")),
+                              R("돈 / 꽝", "-", f"{pc('money')} / {pc('dud')}")],
+                        after_msg=((f"장비가 나오면 창고 {used + 1}/{cap}" if used < cap else "창고 가득 · 장비가 나오면 자동 판매")
+                                   if money >= price else f"돈 부족 (₩{price - money:,} 모자람)"))
+            return base
+        if kind == "game":
+            game = int(arg)
+            if game == 0:
+                sl = self._gamble_target_slot()
+                eq = self.warehouse.equipped.get(sl) if sl else None
+                mult = float(getattr(economy, "GAMBLE_UPGRADE_COST_MULT", 1.5))
+                cost = int(economy.upgrade_cost(eq) * mult) if eq else 0
+                lv = int(eq.get("level", 0)) if eq else 0
+                odds = getattr(economy, "GAMBLE_UPGRADE_ODDS", {"up": 0.6, "same": 0.3, "down": 0.1})
+                up = int(getattr(economy, "GAMBLE_UPGRADE_UP", 2))
+                down = int(getattr(economy, "GAMBLE_UPGRADE_DOWN_UNIQUE", 1) if (eq and eq.get("rarity") == "unique")
+                           else getattr(economy, "GAMBLE_UPGRADE_DOWN", 3))
+                max_lv = int(getattr(economy, "MAX_LEVEL", 20))
+                pc = lambda k: int(round(float(odds.get(k, 0)) * 100))
+                base.update(name=(eq["name"] if eq else "장착한 장비 없음"), rarity=(eq.get("rarity") if eq else None),
+                            level=(lv if eq else None), slot=sl, slot_label=(economy.SLOT_LABEL.get(sl) if sl else None),
+                            action="gamble", buy=cost,
+                            rows=[R("판돈 ₩", money, money - cost), R(f"↑ {pc('up')}%", lv, min(max_lv, lv + up)),
+                                  R(f"= {pc('same')}%", lv, lv), R(f"↓ {pc('down')}%", lv, max(0, lv - down))],
+                            after_msg=("C 대상 변경 · " + (f"Lv {lv} → {lv + up} 또는 {max(0, lv - down)}" if eq else "장비를 먼저 장착")))
+                if eq:
+                    base["perks"] = [{"label": a, "text": b} for a, b in zip(*self._perk_texts(eq))]
+            elif game == 1:
+                stake = max(100, int(money * DOUBLE_STAKES[t["stake_i"]]))
+                streak = int(t["streak"])
+                mult = min(int(getattr(economy, "DOUBLE_MAX_MULT", 8)), 2 ** (streak + 1))
+                win = int(round(float(getattr(economy, "DOUBLE_WIN_CHANCE", 0.5)) * 100))
+                base.update(name="더블업", slot="g1", slot_label="도박장", action="gamble", buy=stake,
+                            rows=[R("판돈 ₩", money, money - stake), R(f"성공 {win}%", money, money - stake + stake * mult),
+                                  R(f"실패 {100 - win}%", money, money - stake), R("연승", streak, streak + 1)],
+                            after_msg=f"판돈 {int(DOUBLE_STAKES[t['stake_i']] * 100)}% · 성공 시 ×{mult} · C 판돈 변경")
+            else:
+                bet = int(SLOT_BETS[t["bet_i"]])
+                pay = getattr(economy, "SLOT_PAYOUT", {"7": 30, "₩": 10, "◆": 5, "♥": 5, "★": 0})
+                pair = int(getattr(economy, "SLOT_PAIR_PAYOUT", 1))
+                base.update(name="슬롯", slot="g2", slot_label="도박장", action="gamble", buy=bet,
+                            rows=[R("판돈 ₩", money, money - bet), R(f"7·7·7 ×{pay.get('7', 30)}", bet, bet * int(pay.get("7", 30))),
+                                  R(f"₩·₩·₩ ×{pay.get('₩', 10)}", bet, bet * int(pay.get("₩", 10))),
+                                  R(f"2개 일치 ×{pair}", bet, bet * pair)],
+                            after_msg="★★★ = 레어 장비 · 7·7·7 = 유니크 장비 · C 배팅 변경")
+            return base
+        # shelf (store / shop)
+        slot = arg
+        entries = self._shelf_entries(tab, slot)
+        equipped = self.warehouse.equipped.get(slot)
+        perks = self.perks
+        if tab == "store" and col == 0:
+            if equipped is None:
+                return None
+            item, action = equipped, "unequip"
+            fx_before, fx_after = economy.equip_effect(equipped), economy.equip_effect(None)
+        elif 1 <= col <= len(entries):
+            item = entries[col - 1][1]
+            action = "equip" if tab == "store" else "buy"
+            fx_before, fx_after = economy.equip_effect(equipped), economy.equip_effect(item)
+        else:
+            return None
+        key = economy.SLOT_EFFECT[slot][0] if slot in economy.SLOT_EFFECT else "shield"
+        fmt = "pct" if key in PCT_EFFECTS else "int"
+        s = self._town_stats_now()
+        now_eff = self._shield_max() if key == "shield" else self._equip_fx().get(key, 0)
+        rws = [R("힘", s["str"], s["str"] + int(fx_after["str"] - fx_before["str"])),
+               R("민첩", s["agi"], s["agi"] + int(fx_after["agi"] - fx_before["agi"])),
+               R("지혜", s["int"], s["int"] + int(fx_after["int"] - fx_before["int"])),
+               R(SLOT_EFFECT_LABEL.get(key, key), self._fx_num(now_eff, key),
+                 self._fx_num(now_eff + fx_after[key] - fx_before[key], key), fmt)]
+        labels, texts = self._perk_texts(item)
+        base.update(name=item["name"], rarity=item.get("rarity"), level=int(item.get("level", 0) or 0), slot=slot,
+                    slot_label=economy.SLOT_LABEL.get(slot, slot), action=action, rows=rws,
+                    perks=[{"label": a, "text": b} for a, b in zip(labels, texts)])
+        if tab == "store":
+            base["sell"] = int(economy.sell_price(item, self.stage_no))
+            base["enhance"] = int(economy.enhance_cost(item, perks))
+            if action == "unequip":
+                base["after_msg"] = (f"해제하면 창고 {used + 1}/{cap}" if used < cap else "창고가 가득 차 해제 불가")
+            elif equipped:
+                base["after_msg"] = f"장착하면 창고 {used}/{cap} · 해제: {equipped['name']} → 창고"
+            else:
+                base["after_msg"] = f"장착하면 창고 {used - 1}/{cap} · 해제되는 장비 없음"
+        else:
+            price = int(economy.buy_price(item, self.stage_no))
+            owned = self._owned_in_slot(slot)
+            base["buy"] = price
+            if money < price:
+                base["after_msg"] = f"돈 부족 (₩{price - money:,} 모자람) · 보유 {owned}"
+            elif equipped is None:              # the 잔액 line right above already shows the balance: never repeat it
+                base["after_msg"] = f"보유 {owned} · 빈 슬롯 → 구매 즉시 장착"
+            elif used >= cap:
+                base["after_msg"] = f"보유 {owned} · 창고가 가득 찼습니다 ({used}/{cap})"
+            else:
+                base["after_msg"] = f"보유 {owned} · 구매 후 창고 {used + 1}/{cap}"
+        return base
+
+    def _town_legend(self, tab: str, rows: list, cur: dict) -> tuple:
+        """([[key, verb], ...], footer context message). The message names the target slot as "[<slot label>]"
+        so the renderer can tag it in the slot hue."""
+        t = self.town
+        kind, arg = rows[cur["row"]]
+        col = int(cur["col"])
+        money, stage = int(self.money), int(self.stage_no)
+        used, cap = len(self.warehouse.items), self.warehouse.CAP
+        rows_word = {"stat": "항목", "shop": "선반", "store": "선반", "gamble": "게임"}[tab]
+        if kind == "next":
+            return ([["↑↓", rows_word], ["Enter", "다음 스테이지"], ["Tab", "탭"]],
+                    f"Enter 다음 스테이지 ▶ {stage + 1}스테이지")
+        if kind == "stat":
+            label, _b, _g, mx = self.shop_items[arg]
+            lv = int(self.upgrades.get(arg, 0))
+            cost = self._shop_cost(arg)
+            if mx > 0 and lv >= mx:
+                msg = f"{label} · 최대 단계 (Lv {lv})"
+            elif self.score >= cost:
+                msg = f"Enter {label} 구매 {cost:,}점 → 잔액 {int(self.score) - cost:,}점"
+            else:
+                msg = f"{label} {cost:,}점 · 점수 부족 ({cost - int(self.score):,}점 모자람)"
+            return [["↑↓", "항목"], ["Enter", "구매"], ["Tab", "탭"]], msg
+        if kind == "game":
+            verb = ("대상", "판돈", "배팅")[int(arg) % 3]
+            if arg == 0:
+                sl = self._gamble_target_slot()
+                eq = self.warehouse.equipped.get(sl) if sl else None
+                mult = float(getattr(economy, "GAMBLE_UPGRADE_COST_MULT", 1.5))
+                msg = (f"Enter {eq['name']} 강화 도박 ₩{int(economy.upgrade_cost(eq) * mult):,} · C 대상 변경"
+                       if eq else "장착한 장비가 없습니다 · 창고 탭에서 먼저 장착")
+            elif arg == 1:
+                stake = max(100, int(money * DOUBLE_STAKES[t["stake_i"]]))
+                msg = f"Enter 더블업 판돈 ₩{stake:,} ({int(DOUBLE_STAKES[t['stake_i']] * 100)}%) · C 판돈 변경"
+            else:
+                msg = f"Enter 슬롯 배팅 ₩{int(SLOT_BETS[t['bet_i']]):,} · C 배팅 변경"
+            return [["↑↓", "게임"], ["Enter", "플레이"], ["C", verb], ["Tab", "탭"]], msg
+        if kind == "box":
+            price = int(economy.BOX_PRICE(self.stage_no)) if hasattr(economy, "BOX_PRICE") else 0
+            msg = (f"Enter 랜덤박스 ₩{price:,} → 잔액 ₩{money - price:,}" if money >= price
+                   else f"랜덤박스 ₩{price:,} · 돈 부족 (₩{price - money:,} 모자람)")
+            return [["↑↓", "선반"], ["Enter", "열기"], ["Tab", "탭"]], msg
+        slot = arg
+        slab = economy.SLOT_LABEL.get(slot, slot)
+        entries = self._shelf_entries(tab, slot)
+        equipped = self.warehouse.equipped.get(slot)
+        if tab == "shop":
+            legend = [["←→", "상품"], ["↑↓", "선반"], ["Enter", "구매"], ["Tab", "탭"]]
+            if not (1 <= col <= len(entries)):          # nothing to buy or browse: the legend must not promise Enter / ←→
+                return [["↑↓", "선반"], ["Tab", "탭"]], f"[{slab}] 재고 없음 · ↑↓ 다른 선반"
+            item = entries[col - 1][1]
+            price = int(economy.buy_price(item, self.stage_no))
+            if money < price:
+                return legend, f"{item['name']} ₩{price:,} · 돈 부족 (₩{price - money:,} 모자람)"
+            tail = f" → [{slab}] 슬롯에 바로 장착 (빈 슬롯)" if equipped is None else f" → 창고 {used + 1}/{cap}"
+            return legend, f"Enter {item['name']} 구매 ₩{price:,} → 잔액 ₩{money - price:,}{tail}"
+        if col == 0:
+            legend = [["←→", "카드"], ["↑↓", "선반"], ["Enter", "해제"], ["C", "강화"], ["Tab", "탭"]]
+            if equipped is None:                        # ghost card: no 해제 / 강화 possible, ←→ only when cards exist
+                n = len(entries)
+                legend = ([["←→", "카드"]] if n else []) + [["↑↓", "선반"], ["Tab", "탭"]]
+                return legend, f"[{slab}] 빈 슬롯 · " + (f"창고 카드 {n}장 (→ 선택)" if n else "창고에 해당 장비 없음")
+            lv = int(equipped.get("level", 0) or 0)
+            cost = int(economy.enhance_cost(equipped, self.perks))
+            max_lv = int(getattr(economy, "MAX_LEVEL", 20))
+            enh = f"C 강화 ₩{cost:,} (Lv {lv} → {lv + 1})" if lv < max_lv else f"강화 최대 (Lv {max_lv})"
+            return legend, f"Enter {equipped['name']} 해제 → 창고 {used + 1}/{cap} · {enh}"
+        legend = [["←→", "카드"], ["↑↓", "선반"], ["Enter", "장착"], ["C", "판매"], ["Tab", "탭"]]
+        item = entries[min(col, len(entries)) - 1][1]
+        sell = int(economy.sell_price(item, self.stage_no))
+        swap = "빈 슬롯" if equipped is None else f"{equipped['name']} 해제"
+        return legend, f"Enter {item['name']} → [{slab}] 슬롯에 장착 ({swap}) · C 판매 ₩{sell:,}"
 
     def _town_view(self) -> dict | None:
         t = self.town
         if t is None or self.state != "town":
             return None
+        self._town_clamp()
         tab = self._town_tab()
         rows = self._town_list(tab)
+        cur = t["cursor"]
         stock = list(self.shop_stock) + [{"kind": "box", "price": int(economy.BOX_PRICE(self.stage_no))
                                          if hasattr(economy, "BOX_PRICE") else 0}]
         afford = []
@@ -2085,8 +2511,18 @@ class World:
         _fx = economy.equip_effect if hasattr(economy, "equip_effect") else (lambda e: None)
         _ecost = economy.enhance_cost if hasattr(economy, "enhance_cost") else (lambda e, p=None: 0)
         enhance_cost = {k: (int(_ecost(v, perks)) if v else 0) for k, v in equipped.items()}
+        # v2.1 shelves / compare / legend (store + shop shelves; the stat / gamble tabs keep their own lists)
+        shelves = [self._shelf_view(tab, sl, perks) for sl in SHELF_ORDER] if tab in ("shop", "store") else []
+        compare = self._town_compare(tab, rows, cur)
+        legend, message = self._town_legend(tab, rows, cur)
+        if rows[cur["row"]][0] != "next":              # Esc jumps onto the 다음 스테이지 row (mockup: "Esc 나가기")
+            legend = legend + [["Esc", "나가기"]]
+        else:                                          # on that row a second Esc leaves the game (molgam.App._on_escape)
+            legend = legend + [["Esc", "게임 종료"]]
+        n_eq = sum(1 for v in equipped.values() if v)
+        g_rows = len(self._town_list("gamble"))
         return {"tab": tab, "tabs": [TOWN_TAB_LABEL[k] for k in TOWN_TABS], "tab_index": t["tab"] % len(TOWN_TABS),
-                "index": t["index"][tab] % len(rows), "count": len(rows), "msg": t["msg"], "stage": self.stage_no,
+                "index": int(cur["row"]), "count": len(rows), "msg": t["msg"], "stage": self.stage_no,
                 "hint": TOWN_HINT[tab], "money": self.money,
                 "stat": {"items": self._shop_view()["items"]},
                 "shop": {"stock": stock, "afford": afford, "prices": prices},
@@ -2114,13 +2550,25 @@ class World:
                           "perk_ui": {k: (dict(v["ui"]) if isinstance(v.get("ui"), dict) else {})
                                       for k, v in perk_table.items()},        # {perk: {rarity: text}}
                           "perk_excluded": sorted(self._perk_ex)},             # greyed ' (미적용)' for this character
-                "gamble": {"games": list(GAMBLE_GAMES), "game": t["index"]["gamble"] % len(rows),
+                "gamble": {"games": list(GAMBLE_GAMES), "game": int(t["cursors"]["gamble"]["row"]) % g_rows,
                            "stake": max(100, int(self.money * DOUBLE_STAKES[t["stake_i"]])),
                            "stake_pct": int(DOUBLE_STAKES[t["stake_i"]] * 100), "streak": t["streak"],
-                           "reels": t["reels"], "bet": SLOT_BETS[t["bet_i"]],
+                           "reels": t["reels"], "bet": SLOT_BETS[t["bet_i"]], "text": str(t.get("slot_text") or ""),
                            "target": (list(economy.SLOTS).index(tgt) if tgt else None),
                            "target_eq": (dict(self.warehouse.equipped[tgt]) if tgt else None),
-                           "target_cost": (int(economy.upgrade_cost(self.warehouse.equipped[tgt]) * 1.5) if tgt else 0)}}
+                           "target_cost": (int(economy.upgrade_cost(self.warehouse.equipped[tgt]) * 1.5) if tgt else 0)},
+                # v2.1 shelf cursor contract (TOWN_SPEC "View contract")
+                "score": int(self.score),
+                "char": {"key": self.char_key, "name": str(self.char.get("name", "?")),
+                         "trait": str(self.char.get("trait", "") or ""), "stats": self._town_stats_now(),
+                         "shield_max": int(self._shield_max()), "lives": int(self.lives)},
+                "cursor": {"row": int(cur["row"]), "col": int(cur["col"])}, "rows_total": len(rows),
+                "shelf_order": list(SHELF_ORDER),
+                "shelves": shelves,
+                "compare": compare,
+                "legend": legend,
+                "message": message,
+                "capacity": {"used": len(self.warehouse.items), "cap": self.warehouse.CAP, "equipped": n_eq}}
 
     def _drop_item(self, e: Enemy):
         """Kill drops: money every time (v1.9), plus the usual item roll; bosses drop equipment.
@@ -3259,6 +3707,17 @@ class World:
             self._set_state("game_over")
             return
         # restart current wave / boss (v2.0: coin piles on the floor survive the respawn)
+        b = self.boss_ref
+        if b is not None and not b.alive:      # the (mid) boss fell during the death animation: it already paid
+            self.boss_ref = None               # (money / gear / legacy grant in _kill_enemy) -> never fight it twice
+            if self.phase == "midboss":        # (_check_progress skips dead players, so resolve the kill here)
+                self.mid_done = True
+                self.phase = "wave"
+            else:
+                self.boss_index += 1
+                if self.boss_index >= len(self.stage["bosses"]):
+                    self._stage_clear()
+                    return
         self.enemies.clear()
         self.bullets.clear()
         self.items = [it for it in self.items if it.kind == "coin"]
@@ -3497,6 +3956,35 @@ def _check_snapshot(s: dict):
     assert len(s["hud"]["char_locked"]) == len(CHAR_KEYS)
     assert (s["hud"]["shop"] is not None) == (s["state"] == "shop")
     assert (s["hud"]["town"] is not None) == (s["state"] == "town")
+    tv = s["hud"]["town"]
+    if tv is not None:                                   # v2.1 shelf cursor contract (hud.town)
+        assert {"score", "char", "cursor", "rows_total", "shelf_order", "shelves", "compare", "legend", "message",
+                "capacity", "tab", "tabs", "tab_index", "index", "count", "msg", "stage", "hint", "money", "stat",
+                "shop", "store", "gamble"} <= set(tv)
+        assert tv["shelf_order"] == list(SHELF_ORDER) and tv["rows_total"] == tv["count"] >= 2
+        assert 0 <= tv["cursor"]["row"] < tv["rows_total"] and tv["cursor"]["col"] >= 0 and tv["index"] == tv["cursor"]["row"]
+        assert len(tv["shelves"]) == (6 if tv["tab"] in ("store", "shop") else 0)
+        for i, sh in enumerate(tv["shelves"]):
+            assert sh["slot"] == SHELF_ORDER[i] and sh["count"] == len(sh["cards"]) - 1
+            assert 0 <= sh["window"] <= max(0, sh["count"] - TOWN_CARDS_VISIBLE)
+            assert (sh["cards"][0] is None) == (sh["equipped"] is None)
+            if i == tv["cursor"]["row"]:
+                assert tv["cursor"]["col"] < len(sh["cards"])
+                assert tv["cursor"]["col"] == 0 or sh["window"] <= tv["cursor"]["col"] - 1 < sh["window"] + TOWN_CARDS_VISIBLE
+        c = tv["compare"]
+        if c is not None:
+            assert c["action"] in ("equip", "unequip", "buy", "box", "next", "stat", "gamble") and len(c["rows"]) == 4
+            for r in c["rows"]:
+                assert set(r) == {"label", "now", "after", "delta", "fmt"} and r["fmt"] in ("int", "pct")
+            assert all(set(p) == {"label", "text"} for p in c["perks"])
+            if c["action"] == "stat":                       # renderer keys the stripe hue / glyph off compare.slot
+                assert c["slot"] in STAT_ROW_LABEL and c["slot_label"] == STAT_ROW_LABEL[c["slot"]]
+            elif c["action"] == "gamble":
+                assert c["slot"] is None or c["slot"] in economy.SLOTS or c["slot"] in ("g1", "g2")
+        assert all(isinstance(p, list) and len(p) == 2 for p in tv["legend"]) and isinstance(tv["message"], str)
+        assert set(tv["capacity"]) == {"used", "cap", "equipped"} and 0 <= tv["capacity"]["used"] <= tv["capacity"]["cap"]
+        assert set(tv["char"]) == {"key", "name", "trait", "stats", "shield_max", "lives"}
+        assert set(tv["char"]["stats"]) == {"str", "agi", "int"}
     for a in s["allies"]:
         assert set(a.keys()) == ALLY_KEYS and a["kind"] in ("decoy", "drone", "dog")
     for w in s["words"]:
@@ -4703,7 +5191,11 @@ def selftest() -> int:
             break
     assert any(b.kind == "blast" and b.owner == "enemy" for b in gw.bullets), "bomb must blast after landing"
     _check_snapshot(gw.snapshot())
-    # town after stage 5: buy gear, open a box, equip / unequip / sell, gamble, next stage; save round-trip
+    # town after stage 5 (v2.1 shelf cursor): buy (empty slot -> straight onto the body, then into the warehouse),
+    # box, equip (into an empty slot + a swap), unequip, enhance (success / 부족 / MAX_LEVEL), sell, gamble x3,
+    # save round-trip, next stage; the compare table must mirror the equip delta
+    def _key(w, k):
+        w.key_down(k); w.key_up(k)
     tw5 = _fresh("jaehwi", 111, stage=5, money=200000)
     tw5._stage_clear()
     assert tw5.state == "stage_clear" and tw5.best_clear["normal"] == 5
@@ -4712,35 +5204,178 @@ def selftest() -> int:
     assert set(log[0]) >= {"duration", "enemy_hp_avg", "ttk_avg", "hits_shield", "hits_life", "money_gained"}
     _run(tw5, CLEAR_TO_SHOP + 0.1)
     assert tw5.state == "town" and len(tw5.shop_stock) == 10
+    tw5.score = 50000
     snap_t = tw5.snapshot()
     _check_snapshot(snap_t)
     town = snap_t["hud"]["town"]
     assert town["tab"] == "stat" and len(town["tabs"]) == 4 and len(town["shop"]["stock"]) == 11
-    tw5.key_down("tab"); tw5.key_up("tab")
-    assert tw5._town_tab() == "shop"
+    assert town["cursor"] == {"row": 0, "col": 0} and town["rows_total"] == 7 and town["shelves"] == []
+    assert town["compare"]["action"] == "stat" and town["compare"]["buy"] == tw5._shop_cost("str")
+    assert town["compare"]["slot"] == "str" and town["compare"]["slot_label"] == "힘"     # v2.1: stat hue / glyph key
+    assert town["legend"][0] == ["↑↓", "항목"] and town["char"]["key"] == "jaehwi" and town["char"]["lives"] == tw5.lives
+    assert town["capacity"] == {"used": 0, "cap": economy.Warehouse.CAP, "equipped": 0} and town["score"] == 50000
+    _key(tw5, "up")                                            # rows wrap: ↑ from row 0 lands on "다음"
+    assert tw5.town["cursor"]["row"] == 6 and tw5._town_list("stat")[6][0] == "next"
+    assert tw5.snapshot()["hud"]["town"]["compare"]["action"] == "next"
+    _key(tw5, "down"); _key(tw5, "right")                      # ←→ also walk the rows on the stat / gamble tabs
+    assert tw5.town["cursor"]["row"] == 1 and tw5.snapshot()["hud"]["town"]["index"] == 1
     tw5.state_t = 1.0
+    _key(tw5, "confirm")                                       # buy 민첩 +1 with score (stat shop unchanged)
+    assert tw5.upgrades["agi"] == 1 and tw5.score < 50000, tw5.town["msg"]
+    _key(tw5, "tab")
+    assert tw5._town_tab() == "shop" and tw5.town["cursor"] is tw5.town["cursors"]["shop"]
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["rows_total"] == 8 and town["shelf_order"] == list(SHELF_ORDER) and len(town["shelves"]) == 6
+    assert sum(sh["count"] for sh in town["shelves"]) == 10 and all(sh["cards"][0] is None for sh in town["shelves"])
+    r0 = next(i for i, sh in enumerate(town["shelves"]) if sh["count"])
+    slot0 = SHELF_ORDER[r0]
+    while tw5.town["cursor"]["row"] != r0:
+        _key(tw5, "down")
+    assert tw5.town["cursor"]["col"] == 1                     # the shop's col 0 (비교 기준) is skipped
+    sh = tw5.snapshot()["hud"]["town"]["shelves"][r0]
+    order = [(-economy.RARITY_RANK[c["rarity"]], -c["level"], c["name"]) for c in sh["cards"][1:]]
+    assert order == sorted(order), order                       # rarity desc, level desc, name
+    for _ in range(sh["count"]):
+        _key(tw5, "right")
+        assert tw5.town["cursor"]["col"] >= 1
+    assert tw5.town["cursor"]["col"] == 1                     # n presses wrap back to card 1
+    _key(tw5, "left")
+    assert tw5.town["cursor"]["col"] == sh["count"]
+    _key(tw5, "right")
+    card = sh["cards"][1]
+    assert card["price"] == economy.buy_price(tw5.shop_stock[card["idx"]], 5) and card["owned"] == 0
+    assert not card["is_equipped"] and card["delta_stats"] == {k: card["stats"][k] for k in ("str", "agi", "int")}
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["compare"]["action"] == "buy" and town["compare"]["buy"] == card["price"] and town["compare"]["slot"] == slot0
+    assert town["legend"][2] == ["Enter", "구매"] and "구매" in town["message"] and f"[{economy.SLOT_LABEL[slot0]}]" in town["message"]
     m0 = tw5.money
-    tw5.key_down("confirm"); tw5.key_up("confirm")             # buy stock[0]
-    assert tw5.money < m0 and len(tw5.shop_stock) == 9 and len(tw5.warehouse.items) == 1, tw5.town["msg"]
-    for _ in range(9):
-        tw5.key_down("right"); tw5.key_up("right")
-    assert tw5._town_list("shop")[tw5.town["index"]["shop"]][0] == "box"
+    _key(tw5, "confirm")                                       # buy into an EMPTY slot -> equipped straight away
+    assert tw5.money == m0 - card["price"] and len(tw5.shop_stock) == 9 and "바로 장착" in tw5.town["msg"], tw5.town["msg"]
+    assert tw5.warehouse.equipped[slot0]["id"] == card["id"] and len(tw5.warehouse.items) == 0
+    tw5.shop_stock.append(economy.make_equipment(tw5.rng, slot0, "unique", 5, 5))
+    sh = tw5.snapshot()["hud"]["town"]["shelves"][r0]
+    assert sh["cards"][0]["is_equipped"] and sh["cards"][0]["price"] is None and sh["equipped"]["id"] == card["id"]
+    assert sh["cards"][1]["rarity"] == "unique" and sh["cards"][1]["owned"] == 1     # unique Lv5 sorts first
+    assert len(sh["cards"][1]["perk_labels"]) == len(tw5.shop_stock[-1]["perks"]) == len(sh["cards"][1]["perk_texts"])
+    assert tw5.town["cursor"]["col"] == 1
+    m0 = tw5.money
+    _key(tw5, "confirm")                                       # buy into an OCCUPIED slot -> warehouse
+    assert tw5.money < m0 and len(tw5.warehouse.items) == 1 and tw5.warehouse.items[0]["rarity"] == "unique"
+    assert "창고" in tw5.town["msg"], tw5.town["msg"]
+    tw5.shop_stock = [e for e in tw5.shop_stock if e["slot"] != "acc"]     # an empty shelf: nothing selectable
+    while tw5.town["cursor"]["row"] != SHELF_ORDER.index("acc"):
+        _key(tw5, "down")
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["cursor"]["col"] == 0 and town["compare"] is None and "재고 없음" in town["message"]
+    assert town["legend"] == [["↑↓", "선반"], ["Tab", "탭"], ["Esc", "나가기"]]    # no Enter / ←→ on an empty shelf
+    _key(tw5, "right")
+    assert tw5.town["cursor"]["col"] == 0
+    r_stock = next(i for i, sh in enumerate(town["shelves"]) if sh["count"] > 0)
+    while tw5.town["cursor"]["row"] != r_stock:                # a stocked shelf: the buy consequence never repeats 잔액
+        _key(tw5, "down")
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["compare"]["action"] == "buy" and "잔액" not in town["compare"]["after_msg"] and "보유" in town["compare"]["after_msg"]
+    assert town["legend"][-1] == ["Esc", "나가기"] and town["legend"][2] == ["Enter", "구매"]
+    while tw5._town_list("shop")[tw5.town["cursor"]["row"]][0] != "box":
+        _key(tw5, "down")
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["compare"]["action"] == "box" and ["Enter", "열기"] in town["legend"]
     m1 = tw5.money
-    tw5.key_down("confirm"); tw5.key_up("confirm")             # random box
+    _key(tw5, "confirm")                                       # random box
     assert tw5.money != m1 or tw5.town["msg"].startswith("랜덤박스"), tw5.town["msg"]
-    tw5.key_down("tab"); tw5.key_up("tab")                     # store
-    assert tw5._town_tab() == "store" and tw5.town["store_mode"] == "list"
+    _check_snapshot(tw5.snapshot())
+    _key(tw5, "tab")                                           # store
+    assert tw5._town_tab() == "store" and tw5.town["cursor"] is tw5.town["cursors"]["store"]
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["rows_total"] == 7 and town["capacity"]["used"] == len(tw5.warehouse.items) and town["capacity"]["equipped"] == 1
+    while tw5.town["cursor"]["row"] != r0:
+        _key(tw5, "down")
+    assert tw5.town["cursor"]["col"] == 0 and tw5.town["store_mode"] == "equipped"   # equipped card first
+    _key(tw5, "right")
+    hi = next(e for e in tw5.warehouse.items if e["slot"] == slot0 and e["rarity"] == "unique")
+    normal = tw5.warehouse.equipped[slot0]
+    sh = tw5.snapshot()["hud"]["town"]["shelves"][r0]
+    assert sh["cards"][1]["id"] == hi["id"] and tw5.town["store_mode"] == "list"
+    fx_h, fx_n = economy.equip_effect(hi), economy.equip_effect(normal)
+    exp = {k: fx_h[k] - fx_n[k] for k in ("str", "agi", "int")}
+    assert sh["cards"][1]["delta_stats"] == exp and sh["cards"][1]["price"] == economy.sell_price(hi, 5)
+    ekey = economy.SLOT_EFFECT[slot0][0]
+    assert sh["cards"][1]["delta_effect"]["key"] == ekey and sh["cards"][1]["enhance"] is None
+    town = tw5.snapshot()["hud"]["town"]
+    cmp_ = town["compare"]
+    assert cmp_["action"] == "equip" and cmp_["name"] == hi["name"] and cmp_["sell"] == economy.sell_price(hi, 5)
+    assert cmp_["enhance"] == economy.enhance_cost(hi) and cmp_["buy"] is None and len(cmp_["perks"]) == len(hi["perks"]) == 2
+    s_now = tw5._eff_stats(tw5.char)
+    rows_ = {r["label"]: r for r in cmp_["rows"]}
+    for lab, k in (("힘", "str"), ("민첩", "agi"), ("지혜", "int")):
+        assert rows_[lab]["now"] == s_now[k] and rows_[lab]["after"] == s_now[k] + exp[k] and rows_[lab]["fmt"] == "int"
+        assert rows_[lab]["delta"] == (exp[k] or None), rows_
+    eff_row = cmp_["rows"][3]
+    assert eff_row["label"] == SLOT_EFFECT_LABEL[ekey] and eff_row["fmt"] == ("pct" if ekey in PCT_EFFECTS else "int")
+    assert abs((eff_row["after"] - eff_row["now"]) - (fx_h[ekey] - fx_n[ekey])) < 2e-3, eff_row
+    assert normal["name"] in cmp_["after_msg"] and town["legend"][2] == ["Enter", "장착"] and town["legend"][3] == ["C", "판매"]
+    assert f"[{economy.SLOT_LABEL[slot0]}]" in town["message"] and "해제" in town["message"]
     n_items = len(tw5.warehouse.items)
-    tw5.key_down("confirm"); tw5.key_up("confirm")             # equip item 0
-    eq_slot = next(k for k, v in tw5.warehouse.equipped.items() if v)
-    assert len(tw5.warehouse.items) == n_items - 1 and tw5.snapshot()["hud"]["equipped"][eq_slot]
-    fx = tw5._equip_fx()
-    assert isinstance(fx, dict) and "shield" in fx
-    tw5.key_down("down"); tw5.key_up("down")                   # equipped row
-    assert tw5.town["store_mode"] == "equipped"
-    while tw5._town_list("store")[tw5.town["index"]["store"]][1] != eq_slot:
-        tw5.key_down("right"); tw5.key_up("right")
-    # v2.0: C on the equipped row = deterministic 강화 (+1 level, rarity-scaled cost); store view carries the numbers
+    _key(tw5, "confirm")                                       # equip = swap: the normal one goes back to the shelf
+    assert tw5.warehouse.equipped[slot0]["id"] == hi["id"] and len(tw5.warehouse.items) == n_items
+    assert normal["id"] in [e["id"] for e in tw5.warehouse.items] and "해제:" in tw5.town["msg"], tw5.town["msg"]
+    s_after = tw5._eff_stats(tw5.char)
+    assert all(s_after[k] == s_now[k] + exp[k] for k in ("str", "agi", "int"))
+    assert tw5.snapshot()["hud"]["town"]["compare"]["rows"][0]["now"] == s_after["str"]
+    # equip into an EMPTY slot: the row's default col is card 1, the ghost message names the slot
+    slot1 = next(s for s in SHELF_ORDER if s != slot0 and tw5.warehouse.equipped[s] is None)
+    tw5.warehouse.items = [e for e in tw5.warehouse.items if e["slot"] != slot1]
+    tw5.warehouse.items.append(economy.make_equipment(tw5.rng, slot1, "normal", 1, 5))
+    tw5.town["col_mem"]["store"].pop(SHELF_ORDER.index(slot1), None)
+    while tw5.town["cursor"]["row"] != SHELF_ORDER.index(slot1):
+        _key(tw5, "down")
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["cursor"]["col"] == 1 and town["compare"]["action"] == "equip" and "해제되는 장비 없음" in town["compare"]["after_msg"]
+    assert "(빈 슬롯)" in town["message"] and f"[{economy.SLOT_LABEL[slot1]}]" in town["message"]
+    n_items = len(tw5.warehouse.items)
+    _key(tw5, "confirm")
+    assert tw5.warehouse.equipped[slot1] is not None and len(tw5.warehouse.items) == n_items - 1
+    assert tw5.town["cursor"]["col"] == 0                     # the shelf is empty now: cursor clamps to the equipped card
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["compare"]["action"] == "unequip" and town["legend"][2] == ["Enter", "해제"] and town["legend"][3] == ["C", "강화"]
+    _key(tw5, "confirm")                                       # unequip -> back onto the shelf
+    assert tw5.warehouse.equipped[slot1] is None and len(tw5.warehouse.items) == n_items and "해제" in tw5.town["msg"]
+    assert tw5.town["cursor"]["col"] == 0 and tw5.snapshot()["hud"]["town"]["compare"] is None   # ghost
+    town = tw5.snapshot()["hud"]["town"]                       # ghost legend: ←→ (cards exist) · ↑↓ · Tab · Esc, no Enter / C
+    assert town["legend"] == [["←→", "카드"], ["↑↓", "선반"], ["Tab", "탭"], ["Esc", "나가기"]], town["legend"]
+    # window: 5 cards on one shelf, TOWN_CARDS_VISIBLE visible -> the window follows the cursor, the row keeps its col
+    slot2 = next(s for s in SHELF_ORDER if s not in (slot0, slot1))
+    tw5.warehouse.items = [e for e in tw5.warehouse.items if e["slot"] != slot2]
+    for lv in (0, 3, 1, 2, 4):
+        tw5.warehouse.items.append(economy.make_equipment(tw5.rng, slot2, "normal", lv, 5))
+    r2 = SHELF_ORDER.index(slot2)
+    while tw5.town["cursor"]["row"] != r2:
+        _key(tw5, "down")
+    sh = tw5.snapshot()["hud"]["town"]["shelves"][r2]
+    assert sh["count"] == 5 and [c["level"] for c in sh["cards"][1:]] == [4, 3, 2, 1, 0] and sh["window"] == 0
+    assert tw5.town["col_mem"]["store"].get(r2) == 1
+    assert tw5.town["cursor"]["col"] == 1                     # empty slot + cards: a fresh row starts on card 1
+    _key(tw5, "left")
+    assert tw5.town["cursor"]["col"] == 0
+    for _ in range(4):
+        _key(tw5, "right")
+    assert tw5.town["cursor"]["col"] == 4 and tw5.snapshot()["hud"]["town"]["shelves"][r2]["window"] == 1
+    _key(tw5, "right")
+    assert tw5.town["cursor"]["col"] == 5 and tw5.snapshot()["hud"]["town"]["shelves"][r2]["window"] == 2
+    for _ in range(4):
+        _key(tw5, "left")
+    assert tw5.town["cursor"]["col"] == 1 and tw5.snapshot()["hud"]["town"]["shelves"][r2]["window"] == 0
+    _key(tw5, "left")
+    assert tw5.town["cursor"]["col"] == 0 and tw5.snapshot()["hud"]["town"]["shelves"][r2]["window"] == 0
+    _key(tw5, "up"); _key(tw5, "down")
+    assert tw5.town["cursor"]["col"] == 0
+    _check_snapshot(tw5.snapshot())
+    # v2.0: C on the equipped card = deterministic 강화 (+1 level, rarity-scaled cost); store view carries the numbers
+    while tw5.town["cursor"]["row"] != r0:
+        _key(tw5, "up")
+    while tw5.town["cursor"]["col"] != 0:
+        _key(tw5, "left")
+    eq_slot = slot0
     town = tw5.snapshot()["hud"]["town"]
     assert {"enhance_cost", "can_enhance", "max_level", "slot_labels", "slot_order", "effect", "effect_next",
             "items_slot", "total", "perks", "perk_labels", "perk_desc", "upgrade_cost"} <= set(town["store"])
@@ -4748,72 +5383,99 @@ def selftest() -> int:
     assert town["store"]["slot_labels"] == economy.SLOT_LABEL and town["store"]["total"] == tw5._equip_fx()
     assert town["store"]["items_slot"] == [e["slot"] for e in tw5.warehouse.items]
     assert town["store"]["effect"][eq_slot] is not None and town["store"]["effect_next"][eq_slot] is not None
-    assert all(town["store"]["effect"][k] is None for k in economy.SLOTS if k != eq_slot)
-    assert town["store"]["perks"] == {} and isinstance(town["store"]["perk_labels"], dict)
+    assert town["store"]["perks"] == tw5.warehouse.perks() and isinstance(town["store"]["perk_labels"], dict)
     lv0 = tw5.warehouse.equipped[eq_slot]["level"]
-    cost = economy.enhance_cost(tw5.warehouse.equipped[eq_slot])
+    cost = economy.enhance_cost(tw5.warehouse.equipped[eq_slot], tw5.warehouse.perks())
     assert town["store"]["enhance_cost"][eq_slot] == cost > 0 and town["store"]["can_enhance"][eq_slot]
+    assert town["shelves"][r0]["cards"][0]["enhance"] == cost and town["compare"]["enhance"] == cost
+    assert town["compare"]["action"] == "unequip" and f"₩{cost:,}" in town["message"]
     m_e = tw5.money
-    tw5.key_down("skill"); tw5.key_up("skill")                 # 강화
+    _key(tw5, "skill")                                         # 강화
     assert tw5.warehouse.equipped[eq_slot]["level"] == lv0 + 1 and tw5.money == m_e - cost, tw5.town["msg"]
     assert "성공" in tw5.town["msg"] and any(f["kind"] == "boxopen" for f in tw5.effects)
     m_e = tw5.money; tw5.money = 0
-    tw5.key_down("skill"); tw5.key_up("skill")
+    _key(tw5, "skill")
     assert tw5.warehouse.equipped[eq_slot]["level"] == lv0 + 1 and "부족" in tw5.town["msg"]
     assert not tw5.snapshot()["hud"]["town"]["store"]["can_enhance"][eq_slot]
     tw5.money = m_e
     tw5.warehouse.equipped[eq_slot]["level"] = economy.MAX_LEVEL
-    tw5.key_down("skill"); tw5.key_up("skill")
+    _key(tw5, "skill")
     assert tw5.warehouse.equipped[eq_slot]["level"] == economy.MAX_LEVEL and tw5.money == m_e and "최대" in tw5.town["msg"]
-    store_v = tw5.snapshot()["hud"]["town"]["store"]
+    town = tw5.snapshot()["hud"]["town"]
+    store_v = town["store"]
     assert store_v["enhance_cost"][eq_slot] == 0 and not store_v["can_enhance"][eq_slot] and store_v["effect_next"][eq_slot] is None
+    assert town["shelves"][r0]["cards"][0]["enhance"] == 0 and "최대" in town["message"]
     tw5.warehouse.equipped[eq_slot]["level"] = lv0 + 1
     _check_snapshot(tw5.snapshot())
-    tw5.key_down("confirm"); tw5.key_up("confirm")             # unequip
-    assert tw5.warehouse.equipped[eq_slot] is None and len(tw5.warehouse.items) == n_items
-    tw5.key_down("up"); tw5.key_up("up")                       # back to list
+    _key(tw5, "right")                                         # card 1 = the normal one that came off the body
+    n_items = len(tw5.warehouse.items)
     m2 = tw5.money
-    tw5.key_down("skill"); tw5.key_up("skill")                 # sell item 0
-    assert tw5.money > m2 and len(tw5.warehouse.items) == n_items - 1
+    _key(tw5, "skill")                                         # sell
+    assert tw5.money > m2 and len(tw5.warehouse.items) == n_items - 1 and "판매" in tw5.town["msg"]
     sold = tw5.money - m2
-    tw5.key_down("tab"); tw5.key_up("tab")                     # gamble
-    assert tw5._town_tab() == "gamble"
-    tw5.warehouse.items.append(economy.make_equipment(tw5.rng, "hat", "normal", 0, 5))
-    tw5.warehouse.equip(len(tw5.warehouse.items) - 1)
-    tw5.town["index"]["gamble"] = 0
-    tw5.key_down("confirm"); tw5.key_up("confirm")             # upgrade gamble
-    assert tw5.town["gambles" if False else "msg"], "gamble message"
-    tw5.key_down("right"); tw5.key_up("right")
+    _key(tw5, "tab")                                           # gamble
+    assert tw5._town_tab() == "gamble" and tw5.town["cursor"]["row"] == 0
+    town = tw5.snapshot()["hud"]["town"]
+    assert town["rows_total"] == 4 and town["shelves"] == [] and town["compare"]["action"] == "gamble"
+    assert town["compare"]["name"] == tw5.warehouse.equipped[eq_slot]["name"] and town["legend"][2] == ["C", "대상"]
+    _key(tw5, "confirm")                                       # upgrade gamble
+    assert tw5.town["msg"], "gamble message"
+    _key(tw5, "down")
+    assert tw5.town["cursor"]["row"] == 1 and tw5.snapshot()["hud"]["town"]["gamble"]["game"] == 1
+    assert tw5.snapshot()["hud"]["town"]["compare"]["slot"] == "g1"          # 더블업 -> gamble hue / glyph "g1"
+    _key(tw5, "skill")                                         # C = next stake
+    assert tw5.town["stake_i"] == 1 and tw5.snapshot()["hud"]["town"]["gamble"]["stake_pct"] == int(DOUBLE_STAKES[1] * 100)
     m3 = tw5.money
-    tw5.key_down("confirm"); tw5.key_up("confirm")             # double-up
+    _key(tw5, "confirm")                                       # double-up
     assert tw5.money != m3
-    tw5.key_down("right"); tw5.key_up("right")
-    tw5.key_down("confirm"); tw5.key_up("confirm")             # slots
+    _key(tw5, "right")                                         # ←→ walk the games too
+    assert tw5.town["cursor"]["row"] == 2
+    cmp_g = tw5.snapshot()["hud"]["town"]["compare"]
+    assert cmp_g["slot"] == "g2" and cmp_g["slot_label"] == "도박장" and cmp_g["name"] == "슬롯"
+    _key(tw5, "confirm")                                       # slots
     assert tw5.town["reels"] is not None and len(tw5.town["reels"]) == 3
+    assert tw5.snapshot()["hud"]["town"]["gamble"]["reels"] == tw5.town["reels"]
     _check_snapshot(tw5.snapshot())
     sd = tw5.save_data()
     assert sd["money"] == tw5.money and sd["difficulty"] == "normal" and sd["best_clear"] == {"normal": 5}
-    assert sd["warehouse"]["equipped"]["hat"] is not None and len(sd["inventory"]) == INV_SLOTS
+    assert sd["warehouse"]["equipped"][eq_slot] is not None and len(sd["inventory"]) == INV_SLOTS
     rw = World(stages, config, sd, 1920, 340, seed=1)
     assert rw.money == tw5.money and rw.warehouse.to_save() == sd["warehouse"] and rw.best_clear == {"normal": 5}
-    tw5.key_down("right"); tw5.key_up("right")                 # -> "next"
-    assert tw5._town_list("gamble")[tw5.town["index"]["gamble"]][0] == "next"
-    tw5.key_down("confirm"); tw5.key_up("confirm")
+    _key(tw5, "down")                                          # -> "next"
+    assert tw5._town_list("gamble")[tw5.town["cursor"]["row"]][0] == "next"
+    _key(tw5, "confirm")
     assert tw5.state == "play" and tw5.stage_no == 6 and tw5.town is None
     assert tw5._bal["spent"] > 0 and tw5._bal["gambles"] == 3 and not tw5._bal_carry   # v2.0: town sinks carried
     assert tw5._bal["money"] >= sold, tw5._bal["money"]           # ...and town sources (sell / payouts) too
-    # leaving from the 창고 tab's trailing "다음" row (TOWN_HINT sends players there for 강화) must not crash
+    # leaving from the 창고 tab's trailing "다음" row (↑ from the first shelf wraps onto it) must not crash;
+    # Tab wraps around the 4 tabs and ↑↓ never switch tabs any more
     tw6 = _fresh("jaehwi", 116, stage=TOWN_EVERY, money=5000)
     tw6._stage_clear()
     _run(tw6, CLEAR_TO_SHOP + 0.1)
     assert tw6.state == "town"
+    _key(tw6, "down"); _key(tw6, "up")
+    assert tw6._town_tab() == "stat" and tw6.town["cursor"]["row"] == 0
+    for _ in range(4):
+        _key(tw6, "tab")
+    assert tw6._town_tab() == "stat" and tw6.town["tab"] == 0
     for _ in range(2):
-        tw6.key_down("tab"); tw6.key_up("tab")
+        _key(tw6, "tab")
     assert tw6._town_tab() == "store"
-    tw6.key_down("left"); tw6.key_up("left")                  # wraps to ("next", None)
-    assert tw6._town_list("store")[tw6.town["index"]["store"]][0] == "next"
+    _key(tw6, "up")                                            # wraps to ("next", None)
+    assert tw6._town_list("store")[tw6.town["cursor"]["row"]][0] == "next"
+    town = tw6.snapshot()["hud"]["town"]
+    assert town["compare"]["action"] == "next" and "다음 스테이지" in town["message"] and town["legend"][1] == ["Enter", "다음 스테이지"]
+    assert ["Esc", "나가기"] not in town["legend"]              # already on the exit row
+    _key(tw6, "down"); _key(tw6, "down")                       # row 1 (사원증 shelf): Esc = jump onto "다음" (select, not confirm)
+    assert tw6.town["cursor"]["row"] == 1 and ["Esc", "나가기"] in tw6.snapshot()["hud"]["town"]["legend"]
+    tw6.state_t = 0.0
+    _key(tw6, "escape")
+    assert tw6.state == "town" and tw6._town_list("store")[tw6.town["cursor"]["row"]][0] == "next"
+    assert 1 in tw6.town["col_mem"]["store"]                  # the row we left remembers its col
+    _key(tw6, "confirm")                                       # CONFIRM_GUARD: Esc + immediate Enter must not start the stage
+    assert tw6.state == "town"
     tw6.state_t = 1.0
-    tw6.key_down("confirm"); tw6.key_up("confirm")
+    _key(tw6, "confirm")
     assert tw6.state == "play" and tw6.stage_no == TOWN_EVERY + 1 and tw6.town is None
     # game over keeps money / warehouse (meta progression)
     go = _fresh("jaehwi", 112, money=777)
@@ -5146,18 +5808,76 @@ def selftest() -> int:
     assert sv["enhance_cost"]["hat"] == economy.enhance_cost(hat_, {"haggler": 2}) < full_ and sv["perks"] == {"haggler": 2, "magnet": 2}
     assert sv["perk_labels"]["haggler"] == "강화 할인" and sv["perk_ui"]["haggler"]["unique"] == "강화비 x0.65"
     assert sv["perk_excluded"] == ["ult_haste", "ult_time"] and sv["perk_desc"]["magnet"]
-    hg.town["tab"] = TOWN_TABS.index("store"); hg.town["store_mode"] = "equipped"
-    hg.town["index"]["store"] = list(economy.SLOTS).index("hat")
+    hg.town["tab"] = TOWN_TABS.index("store")                 # v2.1 cursor model: row = shelf, col 0 = equipped card
+    hg.town["cursors"]["store"].update(row=SHELF_ORDER.index("hat"), col=0)
     hg.state_t = 1.0
     m_h = hg.money
     hg.key_down("skill"); hg.key_up("skill")
     assert hg.warehouse.equipped["hat"]["level"] == 6 and hg.money == m_h - economy.enhance_cost(hat_, {"haggler": 2}), hg.town["msg"]
-    hg.town["index"]["store"] = list(economy.SLOTS).index("acc")
+    hg.town["cursors"]["store"].update(row=SHELF_ORDER.index("acc"), col=0)
     hg.key_down("confirm"); hg.key_up("confirm")             # unequip the acc -> full price again
     assert hg.warehouse.equipped["acc"] is None and hg.perks == {} and hg.snapshot()["hud"]["town"]["store"]["enhance_cost"]["hat"] == economy.enhance_cost(hg.warehouse.equipped["hat"])
     _check_snapshot(hg.snapshot())
     print("PASS 20: inventory, melee styles, enemy melee, allies, bomb/coffee, typing words, money, difficulty,"
           " boss odds, gravity bombs, town, save, balance log, perks (rank cache, character mask, every hook)")
+
+    # ---- v2.0 review fixes
+    # a final boss that dies during the player's 1.0 s death animation has already paid (money / gear / legacy grant):
+    # _after_death resolves the kill instead of respawning a full-HP boss that would pay a second time
+    bd = _fresh("hyunki", 140)
+    bd.phase = "boss"; bd._spawn_boss(); bb = bd.boss_ref; bb.intro = False; bb.x = 900.0
+    m0, wh0 = bd.money, len(bd.warehouse.items)
+    bd._debug_kill_player(); _run(bd, 0.3)
+    assert bd.player.dead and bb.alive
+    bd._damage_enemy(bb, 10 ** 6)
+    pay, gear, eq1 = bd.money - m0, len(bd.warehouse.items) - wh0, dict(bd.equip)
+    assert pay > 0 and not bb.alive and bd.player.dead
+    _run(bd, 2.5)
+    assert bd.state in ("stage_clear", "shop") and bd.boss_ref is None and not bd.enemies, (bd.state, bd.boss_ref)
+    assert bd.money - m0 == pay and len(bd.warehouse.items) - wh0 == gear and bd.equip == eq1, (bd.money - m0, pay)
+    assert bd.lives == bd.lives_max - 1, (bd.lives, bd.lives_max)   # the death still costs the life; the shop follows
+    _check_snapshot(bd.snapshot())
+    # mid boss variant: mid_done is set and the remaining waves resume (no second 'general')
+    bm = _fresh("hyunki", 145, stage=4)
+    bm.phase = "midboss"; bm.wave_index = 1; bm._spawn_mid_boss(); mb = bm.boss_ref; mb.intro = False; mb.x = 900.0
+    bm._debug_kill_player(); _run(bm, 0.3)
+    bm._damage_enemy(mb, 10 ** 6)
+    _run(bm, 2.2)
+    assert bm.state == "play" and bm.mid_done and bm.phase == "wave" and bm.boss_ref is None, (bm.phase, bm.mid_done)
+    assert not any(e.mid for e in bm.enemies)
+    # Space is 'fire' only in the overlay keymap: one press = one town / shop confirm (fire+confirm would buy twice)
+    tf = _fresh("hyunki", 141, stage=5)
+    tf._open_town(); tf.state_t = 1.0; tf.score = 100000
+    lv0 = tf.upgrades.get("str", 0)
+    tf.key_down("fire"); tf.key_up("fire")
+    assert tf.upgrades["str"] == lv0 + 1, tf.upgrades
+    # perks the character cannot use are labelled ' (미적용)' on town cards and in the compare table
+    pj = _fresh("jaehwi", 142)                   # no "storm" -> ult_time / ult_haste are masked for this character
+    assert {"ult_time", "ult_haste"} <= pj._perk_ex
+    suit_x = dict(economy.make_equipment(random.Random(4), "suit", "rare", 2, 8), perks=["ult_time"])
+    lb_x, tx_x = pj._perk_texts(suit_x)
+    assert lb_x[0].endswith(PERK_OFF_SUFFIX) and tx_x[0].endswith(PERK_OFF_SUFFIX), (lb_x, tx_x)
+    assert pj.warehouse.add(suit_x)
+    pj._open_town(); pj.state_t = 1.0
+    pj.town["tab"] = TOWN_TABS.index("store")
+    pj.town["cursors"]["store"].update(row=SHELF_ORDER.index("suit"), col=1)
+    snap_x = pj.snapshot()
+    _check_snapshot(snap_x)
+    tv_x = snap_x["hud"]["town"]
+    assert tv_x["compare"]["perks"][0]["label"].endswith(PERK_OFF_SUFFIX), tv_x["compare"]["perks"]
+    assert tv_x["shelves"][SHELF_ORDER.index("suit")]["cards"][1]["perk_labels"][0].endswith(PERK_OFF_SUFFIX)
+    ph = _fresh("hyunki", 143)                   # has a "storm": the same gear reads as a live perk
+    assert not ph._perk_texts(suit_x)[0][0].endswith(PERK_OFF_SUFFIX)
+    # hand-edited cache.dat: non-numeric fields fall back instead of raising in World.__init__
+    bad = World(stages, config, {"money": "lots", "best": "x", "stage": "y", "best_clear": {"normal": "x"},
+                                 "inventory": [{"kind": "laser", "count": "zz"}], "equip": {"hat": "abc"},
+                                 "upgrades": {"str": "x", "agi": "2"}}, 1600, 340, seed=144)
+    assert bad.money == 0 and bad.best == 0 and bad.save_stage == 1 and bad.best_clear.get("normal", 0) == 0
+    assert bad.inventory[0] == {"kind": "laser", "count": 1} and bad.saved_equip["hat"] == 0
+    bad._start_game(2, keep_upgrades=True)
+    assert bad.upgrades["str"] == 0 and bad.upgrades["agi"] == 2 and bad.equip["hat"] == 0
+    _check_snapshot(bad.snapshot())
+    print("PASS 21: review fixes (boss kill during death anim pays once, fire = one confirm, '(미적용)' perk labels, tolerant save ints)")
 
     dtms = (time.perf_counter() - t0) * 1000
     print(f"SELFTEST OK ({dtms:.0f} ms)")

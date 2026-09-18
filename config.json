@@ -1,4 +1,5 @@
 {
+  "config_version": 2,
   "hotkey": "shift+0",
   "characters": {
     "jaehwi": {
@@ -188,5 +189,6 @@
     }
   },
   "_comment_v20": "v2.0: equipment(부서 보스 레거시 장비)는 슬롯당 max 3, 레벨당 효과 절반. 모든 슬롯이 max 면 보스가 300₩×스테이지를 대신 지급. economy 상수는 \"economy\": {상수명: 값} 으로 덮어쓴다(economy.configure).",
-  "_comment_v19": "v1.9: melee.style knife|hammer|whip|hip (자동 전환: 사거리 안에 적이 있으면 사격 대신 근접). difficulty/money 수치는 game.py DEFAULT_* 와 economy.py configure() 참조."
+  "_comment_v19": "v1.9: melee.style knife|hammer|whip|hip (자동 전환: 사거리 안에 적이 있으면 사격 대신 근접). difficulty/money 수치는 game.py DEFAULT_* 와 economy.py configure() 참조.",
+  "_comment_config_version": "config_version: 동봉 config.json 의 값이 exe 옆 config.json 보다 크면 molgam.load_config_file 이 equipment 블록의 숫자 값을 동봉본으로 덮어쓴다 (v2.0 레거시 장비 절반 수치). 문자열·사용자 키는 유지."
 }

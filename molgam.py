@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import time
 
@@ -39,9 +40,35 @@ def load_json(name: str, default=None):
     raise FileNotFoundError(name)
 
 
+CONFIG_RESET_BLOCKS = ("equipment",)   # config_version 이 오르면 이 블록들의 숫자 값은 동봉본으로 덮어쓴다 (문자열·사용자 키는 유지)
+
+
+def _config_version(d) -> int:
+    try:
+        return int((d or {}).get("config_version", 1) or 1)
+    except (TypeError, ValueError, AttributeError):
+        return 1
+
+
+def _reset_numbers(dst, src) -> bool:
+    """src 의 숫자 값(bool 제외)을 같은 자리의 dst 에 덮어쓴다 (dict 는 재귀). 바뀐 게 있으면 True."""
+    changed = False
+    if not (isinstance(dst, dict) and isinstance(src, dict)):
+        return False
+    for k, v in src.items():
+        if isinstance(v, dict):
+            changed = _reset_numbers(dst.get(k), v) or changed
+        elif isinstance(v, (int, float)) and not isinstance(v, bool) and dst.get(k) != v:
+            dst[k] = v
+            changed = True
+    return changed
+
+
 def load_config_file(name: str):
     """exe 옆 파일을 우선 쓰되, 새 버전 exe 에 동봉된 파일에만 있는 키는 채워 넣고 저장한다.
-    (업데이트 후에도 사용자가 바꾼 핫키·이름은 그대로, 새 캐릭터·설정 키는 추가)"""
+    (업데이트 후에도 사용자가 바꾼 핫키·이름은 그대로, 새 캐릭터·설정 키는 추가)
+    v2.0: 동봉본의 "config_version" 이 더 크면 CONFIG_RESET_BLOCKS 의 숫자 값도 동봉본으로 덮어쓴다 — merge_missing 은 키만
+    채우므로 v1.6 config.json 의 레거시 장비 수치(레벨당 효과 2배)가 그대로 남던 문제."""
     ext = os.path.join(base_dir(), name)
     bun = os.path.join(bundled_dir(), name)
     if os.path.abspath(ext) == os.path.abspath(bun) or not (os.path.isfile(ext) and os.path.isfile(bun)):
@@ -50,7 +77,16 @@ def load_config_file(name: str):
         data = json.load(f)
     with open(bun, "r", encoding="utf-8") as f:
         bundled = json.load(f)
-    if isinstance(data, dict) and isinstance(bundled, dict) and updater.merge_missing(data, bundled):
+    if not (isinstance(data, dict) and isinstance(bundled, dict)):
+        return data
+    old_ver = _config_version(data)            # merge_missing 이 config_version 키를 채우기 전에 읽는다
+    changed = updater.merge_missing(data, bundled)
+    if old_ver < _config_version(bundled):
+        for block in CONFIG_RESET_BLOCKS:
+            _reset_numbers(data.get(block), bundled.get(block))
+        data["config_version"] = bundled["config_version"]
+        changed = True
+    if changed:
         try:
             with open(ext, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
@@ -70,6 +106,10 @@ try:                                 # v1.6: 팀 B 가 추가하는 상수. 아�
     from game import ELEMENT_KEYS    # noqa: E402
 except ImportError:
     ELEMENT_KEYS = ["cheongryong", "baekho", "jujak", "hyeonmu"]
+try:                                 # v2.0: 현재 캐릭터가 못 쓰는 특전 라벨 꼬리표 (마을 카드/비교표에서 흐리게)
+    from game import PERK_OFF_SUFFIX  # noqa: E402
+except ImportError:
+    PERK_OFF_SUFFIX = " (미적용)"
 import updater                       # noqa: E402
 from version import VERSION          # noqa: E402
 
@@ -154,12 +194,62 @@ DOG_DARK = "#0a0c12"
 DECOY_EDGE = "#9fd3ff"
 CARD_FILL = "#1c2230"
 CARD_SEL = "#ffd166"
-RARITY_COLORS = {"normal": "#c7d2e0", "rare": "#4cc9f0", "unique": "#ffd166"}
+RARITY_COLORS = {"normal": "#c7d2e0", "rare": "#4cc9f0", "unique": "#ff9f43"}   # v2.0 마을: 유니크 = 주황 (금색은 커서·돈 전용)
 RARITY_LABEL = {"normal": "일반", "rare": "레어", "unique": "유니크"}
 SLOT_LABEL = {"hat": "안전모", "gloves": "작업 장갑", "suit": "사신 정장", "shoes": "운동화",
               "weapon": "사무용 무기", "acc": "사원증"}
 SLOT_ORDER = ("hat", "gloves", "suit", "shoes", "weapon", "acc")
 SLOT_SYMBOLS = ("₩", "★", "◆", "♥", "7")
+# ---- v2.0 마을 화면 (시안 v1 "슬롯 선반") 토큰. 알파 없음: 흐림은 _lerp_color(색, T_PANEL, k) 로 미리 섞고 #010203 은 절대 안 나온다.
+T_GROUND, T_PANEL, T_CARD, T_SEL = "#12161f", "#1a1f2b", "#1f2634", "#262e40"
+T_EDGE, T_TEXT, T_MUTED, T_GOLD, T_POS, T_NEG = "#3a4558", "#eef2fa", "#8a95a8", "#ffd166", "#4ade80", "#ff6b6b"
+T_FLAT = "#1c2230"                                   # 상점 0번 "비교 기준" 카드 (테두리 없음)
+T_CELL_EDGE = "#2f3848"                              # 빈 칸 홈 테두리
+T_LIP = ("#5a6475", "#3a4558", "#242b39")            # 선반턱: 밝은선 1px / 바 3px / 밑띠 3px
+T_LIP_ON = ("#f8dea1", "#ffd166", "#71613b")         # 커서 줄 선반턱 (금색)
+SLOT_HUES = {"hat": "#f59e0b", "gloves": "#22c55e", "suit": "#a78bfa", "shoes": "#38bdf8", "weapon": "#ef4444", "acc": "#f472b6"}
+SHELF_ORDER = ("hat", "acc", "suit", "gloves", "weapon", "shoes")   # 선반 = 몸 순서 (머리 → 목 → 몸통 → 손 → 총 → 발)
+SLOT_EFFECT_KEY = {"hat": "shield", "gloves": "rate", "suit": "magic", "shoes": "speed", "weapon": "damage", "acc": "money"}
+EFFECT_LABEL = {"shield": "실드", "rate": "연사", "magic": "마법", "speed": "이동", "damage": "물리", "money": "돈", "jump": "점프"}
+PCT_KEYS = ("rate", "speed", "money", "jump")        # 비교표/카드에서 % 로 적는 효과
+PCT_LABELS = ("연사", "이동", "돈", "점프")             # 비교표 행에 fmt 가 없을 때 라벨로 % 판정
+STAT_LABEL = {"str": "힘", "agi": "민첩", "int": "지혜"}
+STAT_SHORT = {"str": "힘", "agi": "민", "int": "지"}
+TOWN_STAT_HUES = {"str": "#f87171", "agi": "#4ade80", "int": "#60a5fa", "rate": "#fbbf24", "shield": "#7dd3fc", "life": "#f472b6"}
+TOWN_GAMBLE_HUES = ("#f59e0b", "#4ade80", "#a78bfa")
+DOLL_DOTS = {"hat": (0.445, 0.20), "acc": (0.41, 0.39), "suit": (0.27, 0.51),     # 인형 위 부위 점 (스프라이트 폭·높이 비율)
+             "gloves": (0.55, 0.57), "weapon": (0.80, 0.62), "shoes": (0.35, 0.875)}
+TOWN_W, TOWN_H = 1456, 340                           # 시안 패널 폭 / 기준 높이 (넓으면 가운데, 높으면 선반 피치 ↑)
+TOWN_CARD_PITCH = 216                                # 선반 카드 한 칸 (208 + 8). 띠가 1528 보다 좁으면 카드 3 → 2 → 1 장으로 줄이고
+TOWN_RIGHT_COL = 1200                                # 시안 x ≥ 1200 (비교표·헤더 돈/점수·푸터 카드·"+N")을 그만큼 왼쪽으로 민다
+TOWN_LAYOUT_VERSION = 3                              # 바뀌면 town_ui 풀을 다시 만든다
+
+
+def _grect(x, y, w, h) -> list:
+    return [x, y, x + w, y, x + w, y + h, x, y + h]
+
+
+# 16px 격자 글리프: [(종류, 점)] — "fg" 는 글리프 색, "bg" 는 바탕색으로 뚫는 구멍. 스티커·카드·비교표가 같은 표를 쓴다 (이모지 없음).
+TOWN_GLYPHS = {
+    "hat": [("fg", [2, 10, 2, 8, 4, 4, 8, 2, 12, 4, 14, 8, 14, 10]), ("fg", _grect(0, 10, 16, 3))],
+    "acc": [("fg", [7.5, 0, 8.5, 0, 5.5, 4.5, 4.5, 4.5]), ("fg", [7.5, 0, 8.5, 0, 11.5, 4.5, 10.5, 4.5]),
+            ("fg", _grect(4, 4, 8, 11)), ("bg", _grect(7, 5, 2, 1)), ("bg", _grect(6, 8, 4, 4))],
+    "suit": [("fg", [1, 4, 6, 1, 8, 4, 10, 1, 15, 4, 15, 8, 13, 8, 13, 15, 3, 15, 3, 8, 1, 8]), ("bg", [7, 4, 9, 4, 9, 9, 8, 11, 7, 9])],
+    "gloves": [("fg", [4, 15, 4, 7, 6, 4, 9, 4, 11, 7, 11, 9, 13, 8, 15, 10, 12, 12, 12, 15])],
+    "weapon": [("fg", _grect(1, 11, 15, 3)), ("fg", [1, 7, 12, 4, 13, 7, 2, 10]), ("fg", _grect(0, 9, 3, 3))],
+    "shoes": [("fg", [1, 14, 1, 10, 3, 10, 5, 5, 9, 5, 10, 9, 15, 11, 15, 14])],
+    "box": [("fg", _grect(1, 5, 14, 10)), ("fg", _grect(0, 3, 16, 3)), ("bg", _grect(7, 3, 2, 12)), ("bg", _grect(3, 0, 10, 3))],
+    "str": [("fg", _grect(0, 5, 4, 6)), ("fg", _grect(12, 5, 4, 6)), ("fg", _grect(4, 7, 8, 2))],              # 덤벨
+    "agi": [("fg", [9, 0, 3, 9, 7, 9, 5, 16, 13, 6, 9, 6, 11, 0])],                                              # 번개
+    "int": [("fg", _grect(2, 2, 12, 12)), ("bg", _grect(4, 5, 8, 1)), ("bg", _grect(4, 8, 8, 1)), ("bg", _grect(4, 11, 5, 1))],  # 책
+    "rate": [("fg", _grect(1, 3, 6, 2)), ("fg", _grect(4, 7, 6, 2)), ("fg", _grect(7, 11, 6, 2))],             # 탄 3발
+    "shield": [("fg", [2, 2, 14, 2, 14, 9, 8, 15, 2, 9])],
+    "life": [("fg", [8, 15, 1, 8, 1, 4, 4, 1, 8, 4, 12, 1, 15, 4, 15, 8])],                                     # 하트
+    "dice": [("fg", _grect(2, 2, 12, 12)), ("bg", _grect(4, 4, 2, 2)), ("bg", _grect(10, 10, 2, 2)), ("bg", _grect(7, 7, 2, 2))],
+    "coin": [("fg", [8, 1, 12, 2, 15, 6, 15, 10, 12, 14, 8, 15, 4, 14, 1, 10, 1, 6, 4, 2]), ("bg", _grect(7, 5, 2, 6))],
+    "reel": [("fg", _grect(1, 3, 4, 10)), ("fg", _grect(6, 3, 4, 10)), ("fg", _grect(11, 3, 4, 10))],
+}
+TOWN_GLYPH_PARTS = 5                                 # 글리프 하나가 쓰는 폴리곤 수 (최대 fg 3 + bg 2)
 FX_TTL = {"slash": 0.2, "word": 0.8, "coin": 0.8, "boxopen": 0.6}   # 스냅샷에 ttl 이 없을 때 진행률 기준
 
 
@@ -245,6 +335,7 @@ class Renderer:
         self.inv_ui: dict = {}                      # 인벤토리 바 + 돈 + 슬로우 비네트
         self.town_ui: dict = {}                     # 마을 화면
         self._fonts: dict = {}                      # tkinter.font.Font 캐시 (글자 폭 측정)
+        self._measured: dict = {}                   # (text, size, bold) -> px (v2.0 마을 화면 폭 캐시)
         self.W = int(canvas["width"])
         self.H = int(canvas["height"])
 
@@ -544,13 +635,22 @@ class Renderer:
         return f
 
     def _measure(self, text: str, size: int, bold: bool = True) -> int:
+        key = (text, size, bold)
+        w = self._measured.get(key)                  # v2.0: 마을 화면이 프레임마다 수백 번 재는 폭 → 캐시 (Tcl 왕복 절약)
+        if w is not None:
+            return w
         f = self._font(size, bold)
         if f is None:
-            return int(len(text) * size * 0.9)
-        try:
-            return int(f.measure(text))
-        except tk.TclError:
-            return int(len(text) * size * 0.9)
+            w = int(len(text) * abs(size) * 0.9)
+        else:
+            try:
+                w = int(f.measure(text))
+            except tk.TclError:
+                w = int(len(text) * abs(size) * 0.9)
+        if len(self._measured) > 4096:
+            self._measured.clear()
+        self._measured[key] = w
+        return w
 
     @staticmethod
     def _fnum(v) -> float:
@@ -587,9 +687,8 @@ class Renderer:
             for it in self.cv.find_all():
                 self.cv.itemconfig(it, state="hidden")
             self.enemy_items.clear()  # 재생성 (아이템은 남지만 숨김 상태)
-        if old == "town" and self.town_ui:
-            for it in self._town_all_items():
-                self._hide(it)
+        if self.town_ui:                          # v2.0: 마을 풀은 캐시를 함께 비운다 (select 전환의 전체 숨김 포함)
+            self._town_hide_all()
 
     # --- 캐릭터 선택 화면
     def _difficulty_index(self, hud: dict) -> int:
@@ -2059,56 +2158,214 @@ class Renderer:
         for it in self._shop_all_items():
             self.cv.tag_raise(it)                 # 월드 아이템보다 위
 
-    # ------------------------------------------------------------ v1.9 마을 (state == "town")
+    # ------------------------------------------------------------ v2.0 마을 (state == "town") — 시안 v1 "슬롯 선반"
+    # 왼쪽 페이퍼돌 · 가운데 몸 순서(SHELF_ORDER)의 선반 6줄(장착 카드 + 창고/재고 카드 3장 + 여유칸) · 오른쪽 고정 비교표 ·
+    # 아래 키 범례 + 슬롯 태그 메시지. 아이템은 전부 풀(한 번 생성, TOWN_LAYOUT_VERSION 이 바뀌면 재생성)이고 프레임마다
+    # coords/itemconfig 만 바꾼다(_tset 이 바뀐 값만 보낸다). 글자는 픽셀 크기(음수 폰트)라 HTML 시안의 px 와 1:1 이고
+    # 알파는 없으니 흐림은 _lerp_color(색, T_PANEL, k) 로 미리 섞는다. 그리는 순서 = 생성 순서: 패널 → 선반턱 → 스티커 →
+    # 카드 → 인형 → 비교표 → 푸터/헤더. hud.town 의 키가 빠져도(구버전 스냅샷) _town_norm 이 채워 넣는다.
     TOWN_TAB_KEYS = ("stat", "shop", "store", "gamble")
-    TOWN_TAB_LABELS = ("스탯", "상점", "창고", "도박")
-    TOWN_HELP = {"stat": "← → 선택 · Enter 구매 · Tab/↑↓ 탭 전환",
-                 "shop": "← → 선택 · Enter 구매 · Tab/↑↓ 탭 전환",
-                 "store": "Enter 장착/해제 · C 판매 · ↓ 줄 전환",
-                 "gamble": "← → 선택 · Enter 실행 · C 판돈 변경 · Tab 탭 전환"}
+    TOWN_TAB_LABELS = ("스탯 강화", "장비 상점", "창고", "도박장")
+    TOWN_TAB_W = (96, 96, 64, 80)
+    TOWN_LEGEND = {"store": (("←→", "카드"), ("↑↓", "선반"), ("Enter", "장착"), ("C", "판매"), ("Tab", "탭")),
+                   "shop": (("←→", "상품"), ("↑↓", "선반"), ("Enter", "구매"), ("Tab", "탭")),
+                   "stat": (("↑↓", "항목"), ("Enter", "강화"), ("Tab", "탭")),
+                   "gamble": (("↑↓", "게임"), ("Enter", "실행"), ("C", "판돈"), ("Tab", "탭"))}
+    TOWN_AFTER_LABEL = {"equip": "장착 후", "unequip": "해제 후", "buy": "구매 후", "box": "개봉 후",
+                        "stat": "강화 후", "gamble": "기대 결과", "next": "다음"}
+    TOWN_KEYS = ("Enter", "Space", "Tab", "Esc", "←→", "↑↓", "←", "→", "↑", "↓", "C")
+    TOWN_STAT_NAMES = {"str": "힘", "agi": "민첩", "int": "지혜", "rate": "연사", "shield": "실드", "life": "목숨"}
+    TOWN_GAMBLE_GLYPHS = ("dice", "coin", "reel")
+    TOWN_BOX_SUB = "장비 · 아이템 · 돈 중 하나"
 
-    def _new_card(self, lines: int, tag: bool, extra: int) -> dict:
-        c = {"box": self.cv.create_rectangle(0, 0, 0, 0, fill=CARD_FILL, outline=HUD_EDGE, width=1),
-             "sel": self.cv.create_rectangle(0, 0, 0, 0, fill="", outline=CARD_SEL, width=2),
-             "extra": [self.cv.create_rectangle(0, 0, 0, 0, fill="", outline="") for _ in range(extra)],
-             "tag": self.cv.create_rectangle(0, 0, 0, 0, fill="", outline="") if tag else None,
-             "tagtxt": self._text2(0, 0, "", size=8, anchor="center") if tag else None,
-             "lines": [self._text2(0, 0, "", size=9, anchor="n") for _ in range(lines)]}
-        return c
+    # --- 풀 생성/갱신 유틸
+    def _tfont(self, px: int, bold: bool = True):
+        return (FONT, -int(px), "bold" if bold else "normal")
 
-    def _card_items(self, c: dict):
-        yield c["box"]
-        yield c["sel"]
-        yield from c["extra"]
-        if c["tag"] is not None:
-            yield c["tag"]
-            yield from c["tagtxt"]
-        for pair in c["lines"]:
-            yield from pair
+    def _tw(self, text, px: int, bold: bool = True) -> int:
+        return self._measure(str(text), -int(px), bold)
 
-    def _hide_card(self, c: dict) -> None:
-        for it in self._card_items(c):
+    def _titem(self, it: int) -> int:
+        self.town_ui["_all"].append(it)
+        return it
+
+    def _ttext(self, px: int = 12, bold: bool = True, anchor: str = "w", fill: str = T_TEXT) -> int:
+        return self._titem(self.cv.create_text(0, 0, text="", font=self._tfont(px, bold), fill=fill, anchor=anchor,
+                                               state="hidden", tags=("town",)))
+
+    def _trect(self, fill: str = T_CARD, outline: str = "", width: int = 1, dash=None) -> int:
+        kw = {"fill": fill, "outline": outline, "width": width, "state": "hidden", "tags": ("town",)}
+        if dash:
+            kw["dash"] = dash
+        return self._titem(self.cv.create_rectangle(0, 0, 0, 0, **kw))
+
+    def _tpoly(self, fill: str = T_TEXT) -> int:
+        return self._titem(self.cv.create_polygon(0, 0, 0, 0, 0, 0, fill=fill, outline="", state="hidden", tags=("town",)))
+
+    def _tline(self, fill: str = T_TEXT, width: int = 2) -> int:
+        return self._titem(self.cv.create_line(0, 0, 0, 0, fill=fill, width=width, state="hidden", tags=("town",)))
+
+    def _tset(self, it: int, xy=None, **cfg) -> None:
+        """풀 아이템 갱신: 좌표/설정 중 바뀐 것만 tk 로 보내고 이번 프레임에 쓴 것으로 표시한다."""
+        ui = self.town_ui
+        ui["_used"].add(it)
+        c = ui["_cache"].get(it)
+        if c is None:
+            c = ui["_cache"][it] = {}
+        if xy is not None:
+            xy = tuple(int(round(v)) for v in xy)
+            if c.get("xy") != xy:
+                self.cv.coords(it, *xy)
+                c["xy"] = xy
+        cfg["state"] = "normal"
+        ch = {k: v for k, v in cfg.items() if c.get(k) != v}
+        if ch:
+            self.cv.itemconfig(it, **ch)
+            c.update(ch)
+
+    def _town_hide_all(self) -> None:
+        ui = self.town_ui
+        if not ui:
+            return
+        for it in ui.get("_all", ()):
             self._hide(it)
+        ui["_cache"] = {}
+        ui["_visible"] = False
 
-    def _card_line(self, c: dict, i: int, x, y, text, size=9, fill=TEXT_FG, bold=True, anchor="n") -> None:
-        pair = c["lines"][i]
-        f = (FONT, int(size), "bold" if bold else "normal")
-        for it in pair:
-            self.cv.itemconfig(it, font=f, anchor=anchor, state="normal")
-        self._set_text2(pair, x, y, text, fill=fill)
+    def _town_all_items(self):
+        ui = self.town_ui
+        if ui:
+            yield from ui.get("_all", ())
 
-    def _card_tag(self, c: dict, cx, y, rarity) -> None:
-        """희귀도 태그: 어두운 채움 + 희귀도 색 글자. 유니크는 ✦ 반짝임."""
-        col = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
-        label = RARITY_LABEL.get(rarity, str(rarity or "일반"))
-        if rarity == "unique":
-            label = ("✦ %s ✦" if int(time.perf_counter() * 5) % 2 else "· %s ·") % label
-        w = self._measure(label, 8) + 12
-        self.cv.coords(c["tag"], cx - w / 2, y, cx + w / 2, y + 14)
-        self.cv.itemconfig(c["tag"], fill=_dim_color(col, 0.25), outline=_dim_color(col, 0.6), state="normal")
-        self._set_text2(c["tagtxt"], cx, y + 7, label, fill=col)
-        for it in c["tagtxt"]:
-            self._show(it)
+    def _tglyph_new(self) -> list:
+        return [self._tpoly() for _ in range(TOWN_GLYPH_PARTS)]
+
+    def _tglyph(self, g: list, kind: str, x: float, y: float, size: float, fg: str, bg: str) -> None:
+        """16px 격자 글리프(TOWN_GLYPHS)를 (x, y) 에 size 로 그린다. 안 쓰는 부품은 숨겨진 채 남는다."""
+        parts = TOWN_GLYPHS.get(kind) or ()
+        k = size / 16.0
+        for i, it in enumerate(g):
+            if i >= len(parts):
+                break
+            which, pts = parts[i]
+            xy = tuple((x + p * k) if j % 2 == 0 else (y + p * k) for j, p in enumerate(pts))
+            self._tset(it, xy, fill=fg if which == "fg" else bg)
+
+    def _tkeycap(self, kc: tuple, x: float, y: float, label: str, fg: str = T_TEXT, bg: str = T_CARD,
+                 edge: str = T_EDGE, h: int = 16, px: int = 10, pad: int = 4, width: int = 1) -> int:
+        """키캡 (rect, text) 를 왼쪽 위 (x, y) 에 그리고 폭을 돌려준다."""
+        w = self._tw(label, px) + pad * 2
+        self._tset(kc[0], (x, y, x + w - 1, y + h - 1), fill=bg, outline=edge, width=width)
+        self._tset(kc[1], (x + w / 2.0, y + h / 2.0), text=label, fill=fg, font=self._tfont(px, True), anchor="center")
+        return w
+
+    def _tcard_new(self, ghost: bool) -> dict:
+        return {"box": self._trect(), "chip": self._trect(), "stamp": self._trect(fill="", width=2),
+                "stamp_t": self._ttext(10, anchor="center"), "tag": self._trect(), "tag_t": self._ttext(10, anchor="center"),
+                "name": self._ttext(12), "lv": self._ttext(10, anchor="e"), "price": self._ttext(10),
+                "tok": [self._ttext(10) for _ in range(4)],                      # 2줄째 값 ("+3", "+12%")
+                "tokl": [self._ttext(10, bold=False, fill=T_MUTED) for _ in range(4)],   # 2줄째 라벨 ("힘", "연사") — 흐린색
+                "glyph": self._tglyph_new() if ghost else None}
+
+    def _town_build(self) -> dict:
+        """마을 풀 전체 생성 (생성 순서 = z 순서)."""
+        self.town_ui = ui = {"ver": TOWN_LAYOUT_VERSION, "_all": [], "_cache": {}, "_used": set(), "_visible": False}
+        ui["back"] = self._trect(fill=T_GROUND)              # 띠 전체 바닥색 (1920/2560 은 패널 양옆이 바닥색, 플레이 HUD 가림)
+        ui["panel"] = self._trect(fill=T_PANEL, outline=T_EDGE)
+        ui["rule"] = self._trect(fill=T_EDGE)
+        ui["shelves"] = []
+        for _ in range(6):
+            sh = {"groove": self._trect(fill=T_GROUND), "lip": [self._trect() for _ in range(3)],
+                  "box": self._trect(fill=T_CARD, outline=T_EDGE), "tab": self._tpoly(), "glyph": self._tglyph_new(),
+                  "label": self._ttext(12), "sub": self._ttext(10, bold=False),
+                  "cells": [self._trect(fill=T_GROUND, outline=T_CELL_EDGE) for _ in range(3)],
+                  "card0": self._tcard_new(True), "cards": [self._tcard_new(False) for _ in range(3)],
+                  "more": self._ttext(10, anchor="e", fill=T_MUTED), "less": self._ttext(10, anchor="center", fill=T_MUTED)}
+            ui["shelves"].append(sh)
+        ui["reels"] = [(self._trect(fill=T_GROUND, outline=T_EDGE), self._ttext(14, anchor="center")) for _ in range(3)]
+        # 인형
+        ui["name"] = self._ttext(14)
+        ui["trait"] = self._ttext(10, bold=False, fill=T_MUTED)
+        ui["sprite"] = self._titem(self.cv.create_image(0, 0, anchor="nw", state="hidden", tags=("town",)))
+        ui["lead"] = self._tline()
+        ui["dots"] = [self._trect(outline=T_GROUND) for _ in range(6)]
+        ui["eq_lbl"] = self._ttext(11, bold=False, fill=T_MUTED)
+        ui["eq_sq"] = [self._trect() for _ in range(6)]
+        ui["cap_lbl"] = self._ttext(11, bold=False, fill=T_MUTED)
+        ui["cap_ticks"] = [self._trect() for _ in range(24)]
+        # 비교표
+        cp = {"box": self._trect(fill=T_CARD, outline=T_EDGE), "stripe": self._trect(), "name": self._ttext(14),
+              "glyph": self._tglyph_new(), "sub1": self._ttext(10, bold=False, fill=T_MUTED), "sub2": self._ttext(10),
+              "hdr": [self._ttext(10, bold=False, fill=T_MUTED, anchor=a) for a in ("w", "e", "e", "e")],
+              "rules": [self._trect(fill=T_EDGE) for _ in range(3)],
+              "rows": [{"glyph": self._tglyph_new(), "label": self._ttext(12, bold=False), "now": self._ttext(12, bold=False, anchor="e", fill=T_MUTED),
+                        "after": self._ttext(12, anchor="e"), "delta": self._ttext(12, anchor="e")} for _ in range(4)],
+              "perk_lbl": self._ttext(10, bold=False, fill=T_MUTED),
+              "chips": [(self._trect(fill=T_EDGE), self._ttext(10, anchor="center")) for _ in range(2)],
+              "perk_txt": self._ttext(10, bold=False, fill="#a3acbc"),
+              "p1_lbl": self._ttext(10, bold=False, fill=T_MUTED), "p1_val": self._ttext(12),
+              "p2": self._ttext(10, bold=False, fill=T_MUTED, anchor="e"), "p2_val": self._ttext(12, anchor="e"),
+              "after_msg": self._ttext(10, bold=False, fill=T_MUTED)}
+        ui["cmp"] = cp
+        # 랜덤박스 줄 (상점) + 푸터
+        ui["boxrow"] = {"box": self._trect(fill=T_CARD, outline=T_EDGE), "key": (self._trect(), self._ttext(10, anchor="center")),
+                        "glyph": self._tglyph_new(), "name": self._ttext(12), "sub": self._ttext(10, bold=False, fill=T_MUTED),
+                        "price": self._ttext(12, anchor="e")}
+        # 다음 스테이지 카드 (상점 외 탭: 랜덤박스 줄 자리) — 커서가 "다음" 줄이면 금색 통채움 (peel)
+        ui["nextrow"] = {"box": self._trect(fill=T_CARD, outline=T_EDGE), "key": (self._trect(), self._ttext(10, anchor="center")),
+                         "name": self._ttext(12), "sub": self._ttext(10, bold=False, fill=T_MUTED)}
+        ui["legend"] = [((self._trect(), self._ttext(10, anchor="center")), self._ttext(11, bold=False, fill=T_MUTED)) for _ in range(6)]
+        ui["msg"] = [(self._trect(), self._ttext(11, bold=False)) for _ in range(10)]
+        # 헤더
+        ui["tabs"] = [{"box": self._trect(fill=T_CARD, outline=T_EDGE), "bar": self._trect(fill=T_GOLD), "cover": self._trect(fill=T_CARD),
+                       "txt": self._ttext(14, anchor="center")} for _ in range(4)]
+        ui["title"] = self._ttext(12, bold=False, fill=T_MUTED)
+        ui["money"] = self._ttext(18, anchor="e", fill=T_GOLD)
+        ui["score"] = self._ttext(12, bold=False, anchor="e", fill=T_MUTED)
+        ui["next_box"] = self._trect(fill=T_GOLD, outline=T_GOLD)   # "다음" 줄일 때 헤더 버튼 통채움 + 3px 금색 턱
+        ui["next_lip"] = self._trect(fill=T_GOLD)
+        ui["next_key"] = (self._trect(), self._ttext(10, anchor="center"))
+        ui["next_txt"] = self._ttext(11, bold=False, fill=T_MUTED)
+        return ui
+
+    # --- 숫자/문자 보조
+    @staticmethod
+    def _tint(v, default: int = 0) -> int:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
+    @staticmethod
+    def _tmoney(v) -> str:
+        try:
+            return "₩" + format(int(v), ",")
+        except (TypeError, ValueError):
+            return "₩0"
+
+    @staticmethod
+    def _tfmt(v, fmt: str = "int", sign: bool = False) -> str:
+        """비교표/카드 숫자. fmt "pct": 0.12 → 12% · "money": ₩1,234 · "int": 13. 문자열은 그대로."""
+        if v is None:
+            return ""
+        if isinstance(v, str):
+            return v
+        try:
+            f = float(v)
+        except (TypeError, ValueError):
+            return str(v)
+        if fmt == "pct":
+            n = int(round(f * 100))
+            s = "%d%%" % abs(n)
+        elif fmt == "money":
+            n = int(round(f))
+            s = "₩" + format(abs(n), ",")
+        else:
+            n = int(round(f)) if abs(f - round(f)) < 1e-6 else round(f, 1)
+            s = format(abs(n), ",") if isinstance(n, int) else "%.1f" % abs(n)
+        if n < 0:
+            return "-" + s
+        return ("+" + s) if (sign and n > 0) else s
 
     def _fit(self, text: str, size: int, maxw: int) -> str:
         text = str(text)
@@ -2117,39 +2374,6 @@ class Renderer:
         while len(text) > 1 and self._measure(text + "…", size) > maxw:
             text = text[:-1]
         return text + "…"
-
-    @staticmethod
-    def _eq_stats_text(eq: dict) -> str:
-        st = eq.get("stats") if isinstance(eq, dict) else None
-        if not isinstance(st, dict):
-            return ""
-        return "힘+%s 민+%s 지+%s" % (st.get("str", 0), st.get("agi", 0), st.get("int", 0))
-
-    @staticmethod
-    def _perk_line(store: dict, eq: dict, rcol: str, dup: bool = True):
-        """v2.0: 장비 퍽 라벨을 ' · ' 로 잇는다(유니크 2개). 캐릭터 미적용은 ' (미적용)', 장착 중 더 높은 등급에 밀린
-        중복은 ' (중복)'(dup=장착 카드만); 전부 회색이면 줄도 회색. 라벨은 hud.town.store 의 perk_labels(economy 미임포트)."""
-        labels = store.get("perk_labels") if isinstance(store.get("perk_labels"), dict) else {}
-        excluded = set(store.get("perk_excluded") or [])
-        active = store.get("perks") if (dup and isinstance(store.get("perks"), dict)) else {}
-        rank = {"normal": 0, "rare": 1, "unique": 2}.get(eq.get("rarity"), 0)
-        parts, dim = [], 0
-        for k in (eq.get("perks") or []):
-            name = str(labels.get(k, k))
-            try:
-                beaten = int(active.get(k, 0) or 0) > rank
-            except (TypeError, ValueError):
-                beaten = False
-            if k in excluded:
-                name += " (미적용)"
-                dim += 1
-            elif beaten:
-                name += " (중복)"
-                dim += 1
-            parts.append(name)
-        if not parts:
-            return "", rcol
-        return " · ".join(parts), (LOCKED_FG if dim == len(parts) else rcol)
 
     @staticmethod
     def _eq_price(eq: dict):
@@ -2162,445 +2386,975 @@ class Renderer:
                     pass
         return None
 
-    def _town_all_items(self):
-        ui = self.town_ui
-        if not ui:
-            return
-        yield ui["panel"]
-        yield from ui["title"]
-        yield from ui["money"]
-        for pair, line in ui["tabs"]:
-            yield from pair
-            yield line
-        yield ui["next_box"]
-        yield from ui["next_txt"]
-        yield from ui["msg"]
-        yield from ui["help"]
-        yield from ui["stats"]
-        yield from ui["score"]
-        for box, label, sub in ui["rows"]:
-            yield box
-            yield from label
-            yield from sub
-        for c in ui["cards"] + ui["eq"] + ui["grid"]:
-            yield from self._card_items(c)
-        for g in ui["gamble"]:
-            yield g["box"]
-            yield from g["title"]
-            for pair in g["lines"]:
-                yield from pair
-            yield g["coin"]
-            yield g["coin_hi"]
-            yield from g["reels"]
-            for pair in g["reeltxt"]:
-                yield from pair
+    @staticmethod
+    def _tsort_key(eq: dict):
+        rank = {"unique": 0, "rare": 1, "normal": 2}
+        return (rank.get(eq.get("rarity"), 3), -Renderer._tint(eq.get("level")), str(eq.get("name") or ""))
 
+    # --- hud.town 정규화 (구버전 스냅샷도 같은 뷰로)
+    def _town_norm(self, town: dict, hud: dict, snap: dict) -> dict:
+        tab = town.get("tab") if town.get("tab") in self.TOWN_TAB_KEYS else "stat"
+        tabs = town.get("tabs") if isinstance(town.get("tabs"), list) and len(town.get("tabs")) >= 4 else list(self.TOWN_TAB_LABELS)
+        player = snap.get("player") if isinstance(snap.get("player"), dict) else {}
+        ch = dict(town.get("char")) if isinstance(town.get("char"), dict) else {}
+        ch.setdefault("key", player.get("palette") or "hyunki")
+        ch.setdefault("name", hud.get("char_name") or "")
+        ch.setdefault("trait", "")
+        ch.setdefault("stats", hud.get("stats") if isinstance(hud.get("stats"), dict) else {})
+        ch.setdefault("shield_max", hud.get("shield_max"))
+        ch.setdefault("lives", hud.get("lives"))
+        v = {"tab": tab, "tabs": [str(t) for t in tabs[:4]], "tab_index": self.TOWN_TAB_KEYS.index(tab),
+             "msg": str(town.get("msg") or town.get("message") or ""),      # 직전 실행 결과(msg) 우선, 없으면 문맥 문구(message)
+             "stage": self._tint(town.get("stage") or hud.get("stage_no")),
+             "money": self._tint(town.get("money", hud.get("money"))), "score": self._tint(town.get("score", hud.get("score"))),
+             "char": ch, "compare": town.get("compare") if isinstance(town.get("compare"), dict) else None,
+             "legend": town.get("legend") if isinstance(town.get("legend"), list) else [list(p) for p in self.TOWN_LEGEND[tab]],
+             "box": None, "shelves": []}
+        cap = town.get("capacity") if isinstance(town.get("capacity"), dict) else {}
+        store = town.get("store") if isinstance(town.get("store"), dict) else {}
+        equipped = store.get("equipped") if isinstance(store.get("equipped"), dict) else {}
+        if not equipped and isinstance(hud.get("equipped"), dict):
+            equipped = hud["equipped"]
+        n_eq = sum(1 for s in SHELF_ORDER if isinstance(equipped.get(s), dict))
+        v["capacity"] = {"used": self._tint(cap.get("used", len(store.get("items") or []))), "cap": self._tint(cap.get("cap", store.get("cap", 24)), 24),
+                         "equipped": self._tint(cap.get("equipped", n_eq))}
+        v["equipped"] = equipped
+        shop = town.get("shop") if isinstance(town.get("shop"), dict) else {}
+        stock = [e for e in (shop.get("stock") or []) if isinstance(e, dict)]
+        if tab == "shop":
+            box = next((e for e in stock if e.get("kind") == "box"), None)
+            if box is None and town.get("box") is not None:
+                box = town.get("box") if isinstance(town.get("box"), dict) else {"price": town.get("box")}
+            if box is not None:
+                price = self._eq_price(box) or 0
+                v["box"] = {"price": price, "afford": bool(box.get("afford", v["money"] >= price)), "label": str(box.get("label") or "랜덤박스"),
+                            "sub": str(box.get("sub") or self.TOWN_BOX_SUB)}
+        shelves = town.get("shelves") if isinstance(town.get("shelves"), list) else None
+        if tab in ("store", "shop"):
+            if shelves:
+                v["shelves"] = [self._town_norm_shelf(sh, equipped, tab) for sh in shelves if isinstance(sh, dict)]
+            else:
+                v["shelves"] = self._town_legacy_shelves(tab, store, shop, stock, equipped)
+        elif tab == "stat":
+            v["shelves"] = self._town_stat_shelves(town, hud, shelves)
+        else:
+            v["shelves"] = self._town_gamble_shelves(town, shelves)
+        n_rows = len(v["shelves"]) + (1 if v["box"] else 0) + 1
+        v["rows_total"] = max(n_rows, self._tint(town.get("rows_total"), n_rows))
+        cur = town.get("cursor") if isinstance(town.get("cursor"), dict) else None
+        if cur is not None:
+            row, col = self._tint(cur.get("row")), self._tint(cur.get("col"))
+        else:
+            row, col = self._town_legacy_cursor(tab, town, v, store, stock)
+        row = row % max(1, v["rows_total"])
+        v["cursor"] = {"row": row, "col": max(0, col)}
+        v["on_next"] = row == v["rows_total"] - 1
+        v["on_box"] = bool(v["box"]) and row == v["rows_total"] - 2
+        if v["compare"] is None and not v["on_next"]:
+            v["compare"] = self._town_derive_compare(v, tab, town, hud)
+        return v
+
+    def _town_norm_shelf(self, sh: dict, equipped: dict, tab: str) -> dict:
+        slot = sh.get("slot")
+        eq = sh.get("equipped") if isinstance(sh.get("equipped"), dict) else (equipped.get(slot) if isinstance(equipped.get(slot), dict) else None)
+        raw = list(sh.get("cards") or [])
+        n = sh.get("count")
+        # v2.1 contract (game.py): cards[0] = 장착 카드(eq_view) 또는 None(고스트), count = len(cards) - 1 → 창고/재고 카드는 cards[1:]
+        # (픽스처처럼 cards 가 창고/재고 카드만 담고 있으면 그대로 둔다)
+        if raw and (raw[0] is None or (isinstance(n, int) and len(raw) == n + 1 and isinstance(raw[0], dict) and raw[0].get("is_equipped"))):
+            if eq is None and isinstance(raw[0], dict):
+                eq = raw[0]
+            raw = raw[1:]
+        cards = [c for c in raw if isinstance(c, dict)]
+        ekey = sh.get("effect_key") or SLOT_EFFECT_KEY.get(slot, "")
+        for c in cards:
+            self._town_fill_deltas(c, eq, ekey)
+        return {"slot": slot, "label": str(sh.get("label") or SLOT_LABEL.get(slot, slot)), "hue": SLOT_HUES.get(slot, T_MUTED), "glyph": slot,
+                "effect_key": ekey, "effect_label": str(sh.get("effect_label") or EFFECT_LABEL.get(ekey, ekey)),
+                "count": self._tint(sh.get("count"), len(cards)), "window": max(0, self._tint(sh.get("window"))),
+                "equipped": eq, "cards": cards, "kind": tab}
+
+    @staticmethod
+    def _town_fill_deltas(c: dict, eq, ekey: str) -> None:
+        """카드에 delta_stats / delta_effect 가 없으면(구버전) 장착 장비와 비교해 채운다."""
+        st = c.get("stats") if isinstance(c.get("stats"), dict) else {}
+        est = eq.get("stats") if isinstance(eq, dict) and isinstance(eq.get("stats"), dict) else {}
+        if not isinstance(c.get("delta_stats"), dict):
+            c["delta_stats"] = {k: Renderer._tint(st.get(k)) - Renderer._tint(est.get(k)) for k in ("str", "agi", "int")}
+        if not isinstance(c.get("delta_effect"), dict):
+            fx = c.get("effect") if isinstance(c.get("effect"), dict) else {}
+            efx = eq.get("effect") if isinstance(eq, dict) and isinstance(eq.get("effect"), dict) else {}
+            now = Renderer._fnum(efx.get(ekey)) if isinstance(eq, dict) else 0.0
+            c["delta_effect"] = {"key": ekey, "now": now, "after": Renderer._fnum(fx.get(ekey))}
+
+    def _town_legacy_shelves(self, tab: str, store: dict, shop: dict, stock: list, equipped: dict) -> list:
+        items = [e for e in (store.get("items") or []) if isinstance(e, dict)] if tab == "store" else [e for e in stock if e.get("kind") != "box"]
+        sells = store.get("sell") if isinstance(store.get("sell"), list) else []
+        prices = shop.get("prices") if isinstance(shop.get("prices"), list) else []
+        afford = shop.get("afford") if isinstance(shop.get("afford"), list) else []
+        out = []
+        for slot in SHELF_ORDER:
+            eq = equipped.get(slot) if isinstance(equipped.get(slot), dict) else None
+            ekey = SLOT_EFFECT_KEY.get(slot, "")
+            cards = []
+            for i, e in enumerate(items):
+                if e.get("slot") != slot:
+                    continue
+                c = dict(e)
+                c["index"] = i
+                if tab == "store":
+                    c["price"] = sells[i] if i < len(sells) else self._eq_price(e)
+                else:
+                    c["price"] = prices[i] if i < len(prices) else self._eq_price(e)
+                    c["afford"] = bool(afford[i]) if i < len(afford) else True
+                    name = e.get("name")
+                    c["owned"] = sum(1 for w in (store.get("items") or []) if isinstance(w, dict) and w.get("name") == name)                         + sum(1 for w in equipped.values() if isinstance(w, dict) and w.get("name") == name)
+                self._town_fill_deltas(c, eq, ekey)
+                cards.append(c)
+            cards.sort(key=self._tsort_key)
+            out.append({"slot": slot, "label": SLOT_LABEL.get(slot, slot), "hue": SLOT_HUES.get(slot, T_MUTED), "glyph": slot,
+                        "effect_key": ekey, "effect_label": EFFECT_LABEL.get(ekey, ekey), "count": len(cards), "window": 0,
+                        "equipped": eq, "cards": cards, "kind": tab})
+        return out
+
+    def _town_legacy_cursor(self, tab: str, town: dict, v: dict, store: dict, stock: list) -> tuple:
+        """구버전 town.index → (row, col). 마지막 항목은 언제나 다음 스테이지."""
+        idx = self._tint(town.get("index"))
+        shelves = v["shelves"]
+        if tab in ("stat", "gamble"):
+            return (min(idx, len(shelves)), 0)
+        if tab == "store":
+            if store.get("mode") == "equipped":
+                slots = store.get("slot_order") if isinstance(store.get("slot_order"), list) else list(SLOT_ORDER)
+                if idx < len(slots) and slots[idx] in SHELF_ORDER:
+                    return (SHELF_ORDER.index(slots[idx]), 0)
+                return (v["rows_total"] - 1, 0)
+            for r, sh in enumerate(shelves):
+                for k, c in enumerate(sh["cards"]):
+                    if c.get("index") == idx:
+                        sh["window"] = max(0, k - 2)
+                        return (r, k + 1)
+            return (v["rows_total"] - 1, 0)
+        n_stock = sum(1 for e in stock if e.get("kind") != "box")
+        if idx >= n_stock:
+            return (v["rows_total"] - (2 if (idx == n_stock and v["box"]) else 1), 0)
+        for r, sh in enumerate(shelves):
+            for k, c in enumerate(sh["cards"]):
+                if c.get("index") == idx:
+                    sh["window"] = max(0, k - 2)
+                    return (r, k + 1)
+        return (0, 1)
+
+    def _town_stat_shelves(self, town: dict, hud: dict, shelves) -> list:
+        stat = town.get("stat") if isinstance(town.get("stat"), dict) else {}
+        rows = [r for r in (stat.get("items") or []) if isinstance(r, dict) and r.get("key") != "next"]
+        if shelves and not rows:
+            rows = [sh for sh in shelves if isinstance(sh, dict)]
+        score = self._tint(town.get("score", hud.get("score")))
+        out = []
+        for r in rows[:6]:
+            key = str(r.get("key") or r.get("slot") or "")
+            lv, mx, cost = self._tint(r.get("level")), self._tint(r.get("max")), self._tint(r.get("cost"))
+            afford = bool(r.get("afford", (mx <= 0 or lv < mx) and score >= cost))
+            out.append({"slot": key, "label": self.TOWN_STAT_NAMES.get(key, str(r.get("label") or key)), "hue": TOWN_STAT_HUES.get(key, T_MUTED),
+                        "glyph": key, "effect_key": key, "effect_label": self.TOWN_STAT_NAMES.get(key, key), "count": 0, "window": 0,
+                        "equipped": None, "cards": [], "kind": "stat",
+                        "stat": {"label": str(r.get("label") or key), "cost": cost, "level": lv, "max": mx, "afford": afford}})
+        return out
+
+    def _town_gamble_shelves(self, town: dict, shelves) -> list:
+        gm = town.get("gamble") if isinstance(town.get("gamble"), dict) else {}
+        games = gm.get("games") if isinstance(gm.get("games"), list) else ["강화 도박", "더블업", "슬롯"]
+        eq = gm.get("target_eq") if isinstance(gm.get("target_eq"), dict) else None
+        stake, bet, streak = self._tint(gm.get("stake")), self._tint(gm.get("bet")), self._tint(gm.get("streak"))
+        subs = ("대상 " + (SLOT_LABEL.get(eq.get("slot"), str(eq.get("slot"))) if eq else "없음"),
+                "판돈 %d%%" % self._tint(gm.get("stake_pct"), 10), "판돈 " + self._tmoney(bet))
+        out = []
+        for i in range(3):
+            out.append({"slot": "g%d" % i, "label": str(games[i]) if i < len(games) else "", "hue": TOWN_GAMBLE_HUES[i],
+                        "glyph": self.TOWN_GAMBLE_GLYPHS[i], "effect_key": "", "effect_label": subs[i], "count": 0, "window": 0,
+                        "equipped": None, "cards": [], "kind": "gamble",
+                        "gamble": {"i": i, "eq": eq, "cost": self._tint(gm.get("target_cost")), "stake": stake, "bet": bet, "streak": streak,
+                                   "reels": gm.get("reels") if isinstance(gm.get("reels"), list) else None,
+                                   "text": str(gm.get("text") or gm.get("payout_text") or "")}})
+        return out
+
+    def _town_derive_compare(self, v: dict, tab: str, town: dict, hud: dict):
+        """town.compare 가 없을 때(구버전/스탯/도박장) 커서 항목에서 비교표를 만든다."""
+        row, col = v["cursor"]["row"], v["cursor"]["col"]
+        shelves = v["shelves"]
+        if v["on_box"] and v["box"]:
+            b = v["box"]
+            return {"name": b["label"], "rarity": "normal", "level": None, "slot": "box", "slot_label": "상점", "action": "box",
+                    "rows": [], "perks": [], "buy": b["price"], "after_msg": "장비 60% · 아이템 25% · 돈 10% · 꽝 5%"}
+        if row >= len(shelves):
+            return None
+        sh = shelves[row]
+        st = v["char"].get("stats") if isinstance(v["char"].get("stats"), dict) else {}
+        base = [(STAT_LABEL[k], self._tint(st.get(k))) for k in ("str", "agi", "int")]
+        if sh["kind"] == "stat":
+            s = sh["stat"]
+            key = sh["slot"]
+            rows = [{"label": lb, "now": n, "after": n + (1 if key == k else 0), "delta": (1 if key == k else None), "fmt": "int"}
+                    for (lb, n), k in zip(base, ("str", "agi", "int"))]
+            rows.append({"label": "점수", "now": v["score"], "after": v["score"] - s["cost"], "delta": -s["cost"], "fmt": "int"})
+            lvtxt = ("Lv %d/%d" % (s["level"], s["max"])) if s["max"] > 0 else ("Lv %d" % s["level"])
+            return {"name": s["label"], "rarity": "normal", "level": s["level"], "slot": key, "slot_label": sh["label"], "action": "stat",
+                    "rows": rows, "perks": [], "buy": s["cost"], "unit": "점", "after_msg": "강화하면 %s · 점수 %s" % (lvtxt, format(max(0, v["score"] - s["cost"]), ",")),
+                    "afford": s["afford"]}
+        if sh["kind"] == "gamble":
+            g = sh["gamble"]
+            i = g["i"]
+            if i == 0:
+                eq = g["eq"]
+                lv = self._tint(eq.get("level")) if eq else 0
+                down = 1 if (eq and eq.get("rarity") == "unique") else 3
+                rows = [{"label": "성공 60%", "now": g["cost"], "after": "Lv %d" % (lv + 2), "delta": "+2", "fmt": "money"},
+                        {"label": "유지 30%", "now": g["cost"], "after": "Lv %d" % lv, "delta": "·", "fmt": "money"},
+                        {"label": "실패 10%", "now": g["cost"], "after": "Lv %d" % max(0, lv - down), "delta": "-%d" % down, "fmt": "money"}]
+                return {"name": eq.get("name") if eq else "대상 장비 없음", "rarity": (eq or {}).get("rarity", "normal"), "level": lv if eq else None,
+                        "slot": (eq or {}).get("slot"), "slot_label": SLOT_LABEL.get((eq or {}).get("slot"), sh["label"]), "action": "gamble",
+                        "cols": ("판돈", "기대 결과", "변화"), "rows": rows, "perks": [], "buy": g["cost"], "after_msg": "C 대상 장비 변경 · 장착 중인 장비만"}
+            if i == 1:
+                stk = g["stake"]
+                mult = max(1, 2 ** min(g["streak"], 3))
+                rows = [{"label": "성공 50%", "now": stk, "after": stk * 2, "delta": stk, "fmt": "money"},
+                        {"label": "실패 50%", "now": stk, "after": 0, "delta": -stk, "fmt": "money"},
+                        {"label": "연속 ×%d" % mult, "now": stk, "after": stk * mult * 2, "delta": "최대 ×8", "fmt": "money"}]
+                return {"name": sh["label"], "rarity": "normal", "level": None, "slot": "g1", "slot_label": "도박장", "action": "gamble",
+                        "cols": ("판돈", "기대 결과", "변화"), "rows": rows, "perks": [], "buy": stk, "after_msg": "C 판돈 비율 변경 (10% · 25% · 50%)"}
+            bet = g["bet"]
+            rows = [{"label": "7 7 7", "now": bet, "after": bet * 30, "delta": "+유니크", "fmt": "money"},
+                    {"label": "₩ ₩ ₩", "now": bet, "after": bet * 10, "delta": "×10", "fmt": "money"},
+                    {"label": "◆◆◆ · ♥♥♥", "now": bet, "after": bet * 5, "delta": "×5", "fmt": "money"},
+                    {"label": "★ ★ ★", "now": bet, "after": "레어 장비", "delta": "·", "fmt": "money"}]
+            return {"name": sh["label"], "rarity": "normal", "level": None, "slot": "g2", "slot_label": "도박장", "action": "gamble",
+                    "cols": ("판돈", "기대 결과", "배당"), "rows": rows, "perks": [], "buy": bet, "after_msg": "C 판돈 변경 (₩100 · ₩500 · ₩2,000)"}
+        # 창고/상점 (구버전 스냅샷): 커서 카드의 스탯 델타
+        eq = sh["equipped"]
+        card = None
+        if col == 0:
+            card = eq
+        elif col - 1 < len(sh["cards"]):
+            card = sh["cards"][col - 1]
+        if not isinstance(card, dict):
+            return None
+        is_eq = col == 0
+        ds = card.get("delta_stats") if isinstance(card.get("delta_stats"), dict) else {}
+        cst = card.get("stats") if isinstance(card.get("stats"), dict) else {}
+        rows = []
+        for (lb, n), k in zip(base, ("str", "agi", "int")):
+            d = -self._tint(cst.get(k)) if is_eq else self._tint(ds.get(k))
+            rows.append({"label": lb, "now": n, "after": n + d, "delta": d or None, "fmt": "int"})
+        de = card.get("delta_effect") if isinstance(card.get("delta_effect"), dict) else {}
+        ekey = sh["effect_key"]
+        fmt = "pct" if ekey in PCT_KEYS else "int"
+        if is_eq:
+            now = self._fnum((card.get("effect") or {}).get(ekey)) if isinstance(card.get("effect"), dict) else 0.0
+            rows.append({"label": sh["effect_label"], "now": now, "after": 0.0, "delta": (-now or None), "fmt": fmt})
+        else:
+            now, after = self._fnum(de.get("now")), self._fnum(de.get("after"))
+            rows.append({"label": sh["effect_label"], "now": now, "after": after, "delta": ((after - now) or None), "fmt": fmt})
+        action = "unequip" if is_eq else ("equip" if tab == "store" else "buy")
+        perks = [{"label": str(l), "text": str(t)} for l, t in zip(card.get("perk_labels") or [], list(card.get("perk_texts") or []) + [""] * 4)]
+        return {"name": card.get("name") or "?", "rarity": card.get("rarity") or "normal", "level": self._tint(card.get("level")),
+                "slot": sh["slot"], "slot_label": sh["label"], "action": action, "rows": rows, "perks": perks,
+                "sell": (card.get("price") if tab == "store" else card.get("sell")), "enhance": card.get("enhance"),
+                "buy": (card.get("price") if tab == "shop" else None), "after_msg": "", "afford": card.get("afford", True)}
+
+    # --- 그리기
     def _draw_town(self, snap):
         hud = snap.get("hud") or {}
         town = hud.get("town") if snap.get("state") == "town" else None
         if not isinstance(town, dict):
-            if self.town_ui:
-                for it in self._town_all_items():
-                    self._hide(it)
+            if self.town_ui and self.town_ui.get("_visible"):
+                self._town_hide_all()
             return
-        if not self.town_ui:
-            self.town_ui = {
-                "panel": self.cv.create_rectangle(0, 0, 0, 0, fill=HUD_BG, outline=HUD_EDGE, width=2),
-                "title": self._text2(0, 0, "", size=12, anchor="ne"),
-                "money": self._text2(0, 0, "", size=11, anchor="ne", fill=MONEY_FG),
-                "tabs": [(self._text2(0, 0, "", size=12, anchor="nw"),
-                          self.cv.create_line(0, 0, 0, 0, fill=CARD_SEL, width=2)) for _ in range(4)],
-                "next_box": self.cv.create_rectangle(0, 0, 0, 0, fill=CARD_FILL, outline=HUD_EDGE, width=2),
-                "next_txt": self._text2(0, 0, "", size=11, anchor="center"),
-                "msg": self._text2(0, 0, "", size=10, anchor="s", fill="#ffb3b3"),
-                "help": self._text2(0, 0, "", size=9, anchor="s", bold=False, fill="#c7d2e0"),
-                "stats": self._text2(0, 0, "", size=10, anchor="n", bold=False, fill="#9fc9ff"),
-                "score": self._text2(0, 0, "", size=11, anchor="n", fill="#ffd166"),
-                "rows": [],
-                "cards": [],
-                "eq": [],
-                "grid": [],
-                "gamble": [],
-            }
         ui = self.town_ui
-        now = time.perf_counter()
-        cx, cy = self.W // 2, self.H // 2
-        pw, ph = min(self.W - 40, 1180), min(self.H - 20, 250)
-        left, top = cx - pw // 2, cy - ph // 2
-        right, bottom = cx + pw // 2, cy + ph // 2
-        self.cv.coords(ui["panel"], left, top, right, bottom)
-        self._show(ui["panel"])
-        # 탭 줄
-        tab_key = town.get("tab") if town.get("tab") in self.TOWN_TAB_KEYS else "stat"
-        tabs = town.get("tabs") if isinstance(town.get("tabs"), list) else []
-        tx = left + 16
-        ty = top + 6
-        for j, (pair, line) in enumerate(ui["tabs"]):
-            label = str(tabs[j]) if j < len(tabs) else self.TOWN_TAB_LABELS[j]
-            active = self.TOWN_TAB_KEYS[j] == tab_key
-            self._set_text2(pair, tx, ty, label, fill=TEXT_FG if active else LOCKED_FG)
-            for it in pair:
-                self._show(it)
-            w = self._measure(label, 12)
+        if not ui or ui.get("ver") != TOWN_LAYOUT_VERSION:
+            if ui:
+                for it in ui.get("_all", ()):
+                    self.cv.delete(it)
+            ui = self._town_build()
+        ui["_used"] = set()
+        ui["_visible"] = True
+        v = self._town_norm(town, hud, snap)
+        W, H = self.W, self.H
+        # 좁은 띠(1366/1440 노트북): 선반 카드 수를 줄이고 오른쪽 열(시안 x ≥ TOWN_RIGHT_COL)을 카드 피치만큼 왼쪽으로 민다
+        n_cards = 3
+        while n_cards > 1 and W < 72 + TOWN_W - (3 - n_cards) * TOWN_CARD_PITCH:
+            n_cards -= 1
+        dx = (3 - n_cards) * TOWN_CARD_PITCH
+        ox = max(-72, (W - (TOWN_W - dx)) // 2 - 72)              # 시안 좌표(폭 1600, 패널 x72) → 화면 x
+        # 여분 높이는 8칸(선반 피치 6 + 헤더 아래 1 + 푸터 위 1)으로 나눠 최대 8px 씩 주고, 그 블록을 세로 가운데에 놓는다
+        u = min(8, max(0, (H - TOWN_H) // 8))
+        pitch = 40 + u
+        extra = 8 * u                                            # 푸터가 내려가는 양 (= 블록이 자라는 양)
+        oy = max(0, (H - TOWN_H - extra) // 2)
+        g = {"ox": ox, "oy": oy, "pitch": pitch, "u": u, "extra": extra, "now": time.perf_counter(), "cards": n_cards}
+        if dx:
+            X = lambda x: x + ox - (dx if x >= TOWN_RIGHT_COL else 0)   # noqa: E731
+        else:
+            X = lambda x: x + ox                                 # noqa: E731
+        Y = lambda y: y + oy                                     # noqa: E731
+        g["X"], g["Y"] = X, Y
+        g["sy"] = Y(48) + u                                      # 첫 선반 y (헤더 아래 1칸)
+        if v["tab"] == "gamble":                                 # 선반 3줄: 피치를 20px 늘리고 6줄 띠 안에 가운데 정렬 (빈 띠 제거)
+            gp = pitch + 20
+            off = (6 * pitch - 3 * gp) // 2
+        else:
+            gp, off = pitch, 0
+        g["row_y"] = lambda i: g["sy"] + off + i * gp            # noqa: E731
+        self._tset(ui["back"], (0, 0, W, H))
+        self._tset(ui["panel"], (X(72), 0, X(72 + TOWN_W) - 1, H - 1))
+        cur_row = v["cursor"]["row"]
+        shelves = v["shelves"]
+        cursor_shelf = shelves[cur_row] if cur_row < len(shelves) else None
+        for i, sh in enumerate(shelves[:6]):
+            self._town_shelf(ui["shelves"][i], sh, i, v, g, on=(i == cur_row))
+        self._town_doll(ui, v, g, cursor_shelf, cur_row)
+        self._town_compare(ui["cmp"], v, g)
+        self._town_footer(ui, v, g)
+        self._town_header(ui, v, g)
+        # 이번 프레임에 안 쓴 풀 아이템은 숨김 (캐시로 중복 호출 없음)
+        cache = ui["_cache"]
+        for it in ui["_all"]:
+            if it not in ui["_used"]:
+                c = cache.get(it)
+                if c is None:
+                    c = cache[it] = {}
+                if c.get("state") != "hidden":
+                    self.cv.itemconfig(it, state="hidden")
+                    c["state"] = "hidden"
+        self.cv.tag_raise("town")                                # 월드 아이템보다 위 (생성 순서 유지)
+
+    def _town_header(self, ui: dict, v: dict, g: dict) -> None:
+        X, Y = g["X"], g["Y"]
+        self._tset(ui["rule"], (X(80), Y(40), X(1519), Y(40)), fill=T_EDGE, outline="")
+        tx = 80
+        for j, t in enumerate(ui["tabs"]):
+            w = self.TOWN_TAB_W[j]
+            active = j == v["tab_index"]
             if active:
-                self.cv.coords(line, tx - 2, ty + 20, tx + w + 2, ty + 20)
-                self._show(line)
-            else:
-                self._hide(line)
-            tx += w + 28
+                self._tset(t["box"], (X(tx), Y(8), X(tx + w - 1), Y(40)), fill=T_CARD, outline=T_EDGE)
+                self._tset(t["bar"], (X(tx), Y(8), X(tx + w - 1), Y(10)), fill=T_GOLD, outline="")
+                self._tset(t["cover"], (X(tx + 1), Y(40), X(tx + w - 2), Y(41)), fill=T_CARD, outline="")
+            self._tset(t["txt"], (X(tx + w / 2.0), Y(24)), text=v["tabs"][j], fill=T_TEXT if active else T_MUTED, font=self._tfont(14, active))
+            tx += w + 8
+        self._tset(ui["title"], (X(456), Y(25)), text=("마을 · %d스테이지 클리어" % v["stage"]) if v["stage"] else "마을")
+        self._tset(ui["money"], (X(1520), Y(22)), text=self._tmoney(v["money"]))
+        self._tset(ui["score"], (X(1408), Y(25)), text="점수 " + format(v["score"], ","))
+        # 다음 스테이지: Esc 키캡 (Esc = "다음" 줄로 점프) · 커서가 그 줄이면 금색 통채움 버튼 + 바탕색 글자 + 3px 금색 턱 (peel)
+        on = v["on_next"]
+        label = "Enter" if on else "Esc"
+        txt = "다음 스테이지 ▶"
+        kw = self._tw(label, 10) + 8
+        tw = self._tw(txt, 11, on)
+        x0 = X(1320) - (kw + 4 + tw)
+        if on:
+            self._tset(ui["next_box"], (x0 - 8, Y(9), x0 + kw + 4 + tw + 8, Y(35)), fill=T_GOLD, outline=T_GOLD, width=1)
+            self._tset(ui["next_lip"], (x0 - 8, Y(37), x0 + kw + 4 + tw + 8, Y(39)), fill=T_GOLD, outline="")
+            self._tkeycap(ui["next_key"], x0, Y(14), label, fg=T_GOLD, bg=T_GROUND, edge=T_GROUND)
+            self._tset(ui["next_txt"], (x0 + kw + 4, Y(22)), text=txt, fill=T_GROUND, font=self._tfont(11, True))
+        else:
+            self._tkeycap(ui["next_key"], x0, Y(13), label, fg=T_TEXT, bg=T_CARD, edge=T_EDGE)
+            self._tset(ui["next_txt"], (x0 + kw + 4, Y(21)), text=txt, fill=T_MUTED, font=self._tfont(11, False))
+
+    def _town_doll(self, ui: dict, v: dict, g: dict, cursor_shelf, cur_row: int) -> None:
+        X, Y = g["X"], g["Y"]
+        u = g["u"]                                               # 인형도 첫 선반과 같이 1칸 내려간다
+        ch = v["char"]
+        self._tset(ui["name"], (X(80), Y(57) + u), text=str(ch.get("name") or ""))
+        trait = str(ch.get("trait") or "")
+        bits = [(trait + " 특성") if trait else ""]
+        if ch.get("lives") is not None:
+            bits.append("목숨 %d" % self._tint(ch.get("lives")))
+        self._tset(ui["trait"], (X(80), Y(74) + u), text=" · ".join(b for b in bits if b))
+        img = None
         try:
-            stage_no = int(town.get("stage") or hud.get("stage_no") or 0)
-        except (TypeError, ValueError):
-            stage_no = 0
-        # 오른쪽: 다음 스테이지 버튼 + 돈 + 제목
-        nb_w = 132
-        nb_x1 = right - 16
-        nb_x0 = nb_x1 - nb_w
-        self.cv.coords(ui["next_box"], nb_x0, top + 6, nb_x1, top + 30)
-        self._set_text2(ui["next_txt"], (nb_x0 + nb_x1) // 2, top + 18, "다음 스테이지 ▶")
-        self._set_text2(ui["money"], nb_x0 - 14, top + 8, self._money_text(hud.get("money")))
-        self._set_text2(ui["title"], nb_x0 - 14 - self._measure(self._money_text(hud.get("money")), 11) - 14, top + 9,
-                        "마을 · %d 스테이지 클리어" % stage_no if stage_no else "마을")
-        for it in (ui["next_box"], *ui["next_txt"], *ui["money"], *ui["title"]):
-            self._show(it)
-        try:
-            index = int(town.get("index") or 0)
-        except (TypeError, ValueError):
-            index = 0
-        cy0, cy1 = top + 38, bottom - 40                     # 탭 내용 영역 (아래 msg/help 두 줄 여유)
-        # 탭별 내용 — 안 쓰는 탭의 항목은 숨긴다
-        n_items = 0
-        if tab_key == "stat":
-            n_items = self._town_stat(ui, town, hud, index, left, right, cy0, cy1)
+            img = self.bank.get("idle", 0, ch.get("key") or "hyunki", False, 2)
+        except Exception:
+            img = None
+        if img is not None:
+            iw, ih = img.width(), img.height()
+            ix, iy = X(80) + (128 - iw) // 2, Y(224) + u - ih
+            self._tset(ui["sprite"], (ix, iy), image=img)
         else:
-            for box, label, sub in ui["rows"]:
-                self._hide(box)
-                for it in label + sub:
-                    self._hide(it)
-            for it in ui["stats"] + ui["score"]:
-                self._hide(it)
-        if tab_key == "shop":
-            n_items = self._town_shop(ui, town, index, left, right, cy0, cy1, now)
-        else:
-            for c in ui["cards"]:
-                self._hide_card(c)
-        if tab_key == "store":
-            n_items = self._town_store(ui, town, index, left, right, cy0, cy1)
-        else:
-            for c in ui["eq"] + ui["grid"]:
-                self._hide_card(c)
-        if tab_key == "gamble":
-            n_items = self._town_gamble(ui, town, index, left, right, cy0, cy1, now)
-        else:
-            for g in ui["gamble"]:
-                self._hide_gamble(g)
-        # 마지막 항목 = 다음 스테이지 버튼
-        on_next = index >= n_items
-        pulse = 0.5 + 0.5 * math.sin(now * 6.0)
-        self.cv.itemconfig(ui["next_box"], outline=_lerp_color(CARD_SEL, "#fff5cc", pulse) if on_next else HUD_EDGE,
-                           fill=_dim_color(CARD_SEL, 0.3) if on_next else CARD_FILL, width=2)
-        self.cv.itemconfig(ui["next_txt"][1], fill=CARD_SEL if on_next else "#c7d2e0")
-        self._set_text2(ui["msg"], cx, bottom - 20, str(town.get("msg") or ""))
-        self._set_text2(ui["help"], cx, bottom - 5, self.TOWN_HELP.get(tab_key, ""))
-        for it in ui["msg"] + ui["help"]:
-            self._show(it)
-        for it in self._town_all_items():
-            self.cv.tag_raise(it)                 # 월드 아이템보다 위
-
-    def _town_stat(self, ui, town, hud, index, left, right, cy0, cy1) -> int:
-        stat = town.get("stat") if isinstance(town.get("stat"), dict) else {}
-        rows = list(stat.get("items") or [])
-        if rows and isinstance(rows[-1], dict) and rows[-1].get("key") == "next":
-            rows = rows[:-1]                                  # 마지막 "다음 스테이지" 는 오른쪽 버튼으로
-        cx = (left + right) // 2
-        self._set_text2(ui["score"], cx, cy0, "보유 점수 %s" % format(hud.get("score", 0) or 0, ","))
-        self._set_text2(ui["stats"], cx, cy0 + 20, self._stats_text(stat.get("stats") or hud.get("stats")))
-        for it in ui["score"] + ui["stats"]:
-            self._show(it)
-        self._draw_upgrade_rows(ui["rows"], rows, index, left, right - left, (cy0 + cy1) // 2 - 10)
-        return len(rows)
-
-    def _draw_giftbox(self, c: dict, cx, y, size, now) -> None:
-        """랜덤박스: 보라 상자 + 금색 리본 십자 + 뚜껑, 위에 '?' (extra 사각형 3개 + 글줄 1개)."""
-        hw = size / 2.0
-        bob = 1.5 * math.sin(now * 4.0)
-        r0, r1, r2 = c["extra"][0], c["extra"][1], c["extra"][2]
-        self.cv.coords(r0, cx - hw, y + 8 + bob, cx + hw, y + size + bob)
-        self.cv.itemconfig(r0, fill="#7c3aed", outline=TEXT_SHADOW, state="normal")
-        self.cv.coords(r1, cx - hw - 3, y + bob, cx + hw + 3, y + 10 + bob)            # 뚜껑
-        self.cv.itemconfig(r1, fill="#a78bfa", outline=TEXT_SHADOW, state="normal")
-        self.cv.coords(r2, cx - 3, y + bob, cx + 3, y + size + bob)                    # 리본(세로)
-        self.cv.itemconfig(r2, fill=CARD_SEL, outline="", state="normal")
-
-    def _town_shop(self, ui, town, index, left, right, cy0, cy1, now) -> int:
-        shop = town.get("shop") if isinstance(town.get("shop"), dict) else {}
-        stock = list(shop.get("stock") or [])
-        afford = shop.get("afford") if isinstance(shop.get("afford"), list) else []
-        n = len(stock)
-        while len(ui["cards"]) < n:
-            ui["cards"].append(self._new_card(lines=8, tag=True, extra=3))
-        store = town.get("store") if isinstance(town.get("store"), dict) else {}   # v2.0: perk_labels 출처
-        cell = (right - left - 32) // max(1, n)
-        y0, y1 = cy0 + 2, cy1 - 4
-        for i, eq in enumerate(stock):
-            c = ui["cards"][i]
-            x = left + 16 + cell * i + cell // 2
-            bx0, bx1 = x - cell // 2 + 3, x + cell // 2 - 3
-            selected = i == index
-            self.cv.coords(c["box"], bx0, y0, bx1, y1)
-            self.cv.itemconfig(c["box"], outline=HUD_EDGE, fill=_light_color(CARD_FILL, 0.06) if selected else CARD_FILL,
-                               state="normal")
-            if selected:
-                self.cv.coords(c["sel"], bx0 - 2, y0 - 4, bx1 + 2, y1 + 2)   # 살짝 떠 보이게
-                self._show(c["sel"])
+            iw, ih, ix, iy = 128, 120, X(80), Y(104) + u
+        slots = [sh["slot"] for sh in v["shelves"]] if v["tab"] in ("store", "shop") else list(SHELF_ORDER)
+        cur_slot = cursor_shelf["slot"] if (cursor_shelf and cursor_shelf["kind"] in ("store", "shop")) else None
+        for k, slot in enumerate(SHELF_ORDER):
+            fx, fy = DOLL_DOTS.get(slot, (0.5, 0.5))
+            cx, cy = ix + fx * iw, iy + fy * ih
+            s = 9 if slot == cur_slot else 7
+            self._tset(ui["dots"][k], (cx - s // 2, cy - s // 2, cx + s // 2, cy + s // 2), fill=SLOT_HUES.get(slot, T_MUTED), outline=T_GROUND)
+            if slot == cur_slot:
+                self._tset(ui["lead"], (cx, cy, X(214), g["row_y"](cur_row) + 16), fill=SLOT_HUES.get(slot, T_MUTED))
+        cap = v["capacity"]
+        self._tset(ui["eq_lbl"], (X(80), Y(240) + u), text="장착 %d/6" % cap["equipped"])
+        equipped = v["equipped"]
+        for k, slot in enumerate(SHELF_ORDER):
+            hue = SLOT_HUES.get(slot, T_MUTED)
+            x = X(148 + 10 * k)
+            if isinstance(equipped.get(slot), dict):
+                self._tset(ui["eq_sq"][k], (x, Y(236) + u, x + 7, Y(243) + u), fill=hue, outline="")
             else:
-                self._hide(c["sel"])
-            ok = bool(afford[i]) if i < len(afford) else True
-            eq = eq if isinstance(eq, dict) else {}
-            price = self._eq_price(eq)
-            price_txt = self._money_text(price) if price is not None else ""
-            price_col = MONEY_FG if ok else _dim_color("#ff5252", 0.75)
-            maxw = cell - 14
-            if eq.get("kind") == "box":
-                for it in c["tagtxt"]:
-                    self._hide(it)
-                self._hide(c["tag"])
-                self._card_line(c, 0, x, y0 + 6, "랜덤박스", size=8, fill=LOCKED_FG, bold=False)
-                self._draw_giftbox(c, x, y0 + 24, min(40, cell - 30), now)
-                self._card_line(c, 1, x, y0 + 30 + min(40, cell - 30) * 0.35, "?", size=16, fill="#fff5cc")
-                self._card_line(c, 2, x, y0 + 84, "무엇이 나올까", size=8, fill="#c7d2e0", bold=False)
-                self._card_line(c, 3, x, y0 + 100, price_txt, size=9, fill=price_col)
-                self._card_line(c, 4, x, y0 + 118, "장비·아이템·돈", size=8, fill=LOCKED_FG, bold=False)
-                for k in (5, 6, 7):
-                    self._card_line(c, k, x, y0, "", size=8)
+                self._tset(ui["eq_sq"][k], (x, Y(236) + u, x + 7, Y(243) + u), fill="", outline=_lerp_color(hue, T_PANEL, 0.5))
+        self._tset(ui["cap_lbl"], (X(80), Y(256) + u), text="창고 %d/%d" % (cap["used"], cap["cap"]))
+        n_ticks = min(24, max(1, cap["cap"]))
+        for k in range(24):
+            x = X(80 + 5 * k)
+            if k >= n_ticks:
                 continue
-            for it in c["extra"]:
-                self._hide(it)
-            rarity = eq.get("rarity") or "normal"
-            rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
-            slot = eq.get("slot")
-            self._card_line(c, 0, x, y0 + 6, SLOT_LABEL.get(slot, str(slot or "")), size=8, fill=LOCKED_FG, bold=False)
-            self._card_line(c, 1, x, y0 + 20, self._fit(eq.get("name") or "?", 9, maxw), size=9,
-                            fill=TEXT_FG if ok else "#c7d2e0")
-            self._card_tag(c, x, y0 + 40, rarity)
-            try:
-                lv = int(eq.get("level", 0) or 0)
-            except (TypeError, ValueError):
-                lv = 0
-            self._card_line(c, 2, x, y0 + 60, "Lv %d" % lv, size=9, fill=rcol)
-            self._card_line(c, 3, x, y0 + 80, price_txt, size=10, fill=price_col)
+            if k < cap["used"]:
+                self._tset(ui["cap_ticks"][k], (x, Y(264) + u, x + 3, Y(271) + u), fill=T_TEXT, outline="")
+            else:
+                self._tset(ui["cap_ticks"][k], (x, Y(264) + u, x + 3, Y(271) + u), fill="", outline=T_EDGE)
+
+    def _town_shelf(self, p: dict, sh: dict, i: int, v: dict, g: dict, on: bool) -> None:
+        X, Y = g["X"], g["Y"]
+        y = g["row_y"](i)
+        hue = sh["hue"]
+        x0, x1 = X(216), X(1207)
+        cur_col = v["cursor"]["col"] if on else -1
+        # 카드 창: 커서 카드가 보이는 nv 장(기본 3, 좁은 띠 2/1) 안에 들게 민다 (창고/상점만 카드가 있다)
+        nv = int(g.get("cards", 3))
+        cards = sh["cards"]
+        win = sh["window"]
+        if on and cur_col > 0:
+            if cur_col - 1 < win:
+                win = cur_col - 1
+            elif cur_col - 1 >= win + nv:
+                win = cur_col - nv
+        win = max(0, min(win, max(0, len(cards) - nv)))
+        if on:
+            self._tset(p["groove"], (x0, y - 1, x1, y + 31), fill=T_GROUND, outline="")
+        # 선반턱: 커서 줄은 금색인데 스티커(부위색 통채움) 밑에는 깔지 않는다 — 안전모(노랑)와 금색이 한 색으로 읽히지 않게
+        lips = T_LIP_ON if on else T_LIP
+        lx = X(344) if on else x0
+        self._tset(p["lip"][0], (lx, y + 32, x1, y + 32), fill=lips[0], outline="")
+        self._tset(p["lip"][1], (lx, y + 33, x1, y + 35), fill=lips[1], outline="")
+        self._tset(p["lip"][2], (lx, y + 36, x1, y + 38), fill=lips[2], outline="")
+        # 라벨 스티커: 28px 부위색 탭(챔퍼 3) · 커서 줄은 통째로 부위색 (peel)
+        tw = 120 if on else 28
+        self._tset(p["tab"], (x0 + 3, y, x0 + tw, y, x0 + tw, y + 32, x0 + 3, y + 32, x0, y + 29, x0, y + 3), fill=hue)
+        if not on:
+            self._tset(p["box"], (x0, y, x0 + 119, y + 31), fill=T_CARD, outline=T_EDGE)
+        self._tglyph(p["glyph"], sh["glyph"], x0 + 6, y + 8, 16, T_GROUND, hue)
+        self._tset(p["label"], (x0 + 36, y + 11), text=sh["label"], fill=T_GROUND if on else T_TEXT)
+        if sh["kind"] == "store":
+            sub = "%s · 보관 %d" % (sh["effect_label"], sh["count"])
+        elif sh["kind"] == "shop":
+            sub = "%s · 재고 %d" % (sh["effect_label"], sh["count"])
+        elif sh["kind"] == "stat":
+            sub = self._town_stat_values(sh, v)[0]                  # 현재 값 (카드 오른쪽 Lv 와 중복되지 않게)
+        else:
+            sub = sh["effect_label"]
+        if win > 0:                                               # 왼쪽으로 숨은 카드 수도 스티커에 (오른쪽 +N 과 짝)
+            sub += " · ‹%d" % win
+        self._tset(p["sub"], (x0 + 36, y + 24), text=self._fit(sub, -10, 82), fill=_lerp_color(T_GROUND, hue, 0.3) if on else T_MUTED)
+        if sh["kind"] == "stat":                                  # 한 장짜리 랙: 빈 홈 셀 없이 카드 한 장을 넓게
+            self._town_stat_card(p["card0"], sh, X(344), y, 408, on, cur_col == 0, v)
+            return
+        if sh["kind"] == "gamble":
+            self._town_gamble_card(p["card0"], sh, X(344), y, 408, on, cur_col == 0, v, g)
+            return
+        # 0번 = 장착 카드(창고) / 비교 기준(상점) / 고스트
+        eq = sh["equipped"]
+        mode0 = "equip" if sh["kind"] == "store" else "base"
+        self._town_card(p["card0"], X(344), y, 192, eq, mode0, on, cur_col == 0, sh, v)
+        for k in range(nv):
+            x, w = X(544 + TOWN_CARD_PITCH * k), 208
+            if k == 0 and win > 0:                                # 왼쪽 ‹N 차선: 첫 카드를 20px 줄인다 (오른쪽 +N 차선과 대칭)
+                x, w = x + 20, 188
+            idx = win + k
+            if idx < len(cards):
+                self._town_card(p["cards"][k], x, y, w, cards[idx], "item", on, cur_col == idx + 1, sh, v)
+            else:
+                self._tset(p["cells"][k], (x, y, x + w - 1, y + 31), fill=T_GROUND, outline=T_CELL_EDGE)
+        more = len(cards) - (win + nv)
+        if more > 0:
+            self._tset(p["more"], (X(1207), y + 16), text="+%d" % more, fill=T_TEXT if on else T_MUTED)
+        if win > 0:
+            self._tset(p["less"], (X(550), y + 16), text="‹%d" % win, fill=T_TEXT if on else T_MUTED)
+
+    def _town_card(self, c: dict, x: float, y: float, w: int, eq, mode: str, on: bool, cursor: bool, sh: dict, v: dict) -> None:
+        """장비 카드. mode: "equip"(창고 0번, 장착 도장) · "base"(상점 0번, 평평한 비교 기준) · "item"(창고/재고 카드)."""
+        hue = sh["hue"]
+        dim = (lambda col: col) if on else (lambda col: _lerp_color(col, T_PANEL, 0.25))
+        if not isinstance(eq, dict):                              # 고스트: 빈 슬롯 실루엣
+            if cursor:
+                self._tset(c["box"], (x + 1, y + 1, x + w - 2, y + 30), fill=T_PANEL, outline=T_GOLD, width=2, dash="")
+            else:
+                self._tset(c["box"], (x, y, x + w - 1, y + 31), fill=T_PANEL, outline=T_EDGE if on else _lerp_color(T_EDGE, T_PANEL, 0.25),
+                           width=1, dash=(3, 3))
+            if c["glyph"] is not None:
+                self._tglyph(c["glyph"], sh["glyph"], x + 10, y + 8, 16, _lerp_color(hue, T_PANEL, 0.5 if on else 0.6), T_PANEL)
+            self._tset(c["name"], (x + 34, y + 11), text=self._fit("%s 없음" % sh["label"], -12, w - 40),
+                       fill=T_MUTED if on else _lerp_color(T_MUTED, T_PANEL, 0.25), font=self._tfont(12, True))
+            self._tset(c["price"], (x + 34, y + 24), text=self._fit("빈 슬롯 · %s 효과 없음" % sh["effect_label"], -10, w - 40),
+                       fill=_lerp_color(T_MUTED, T_PANEL, 0.15 if on else 0.4), font=self._tfont(10, False))
+            return
+        rarity = eq.get("rarity") or "normal"
+        rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
+        afford = True
+        if mode == "item" and sh["kind"] == "shop":
+            afford = bool(eq.get("afford", v["money"] >= self._tint(eq.get("price"))))
+        if cursor:
+            self._tset(c["box"], (x + 1, y + 1, x + w - 2, y + 30), fill=T_SEL, outline=T_GOLD, width=2, dash="")
+            self._tset(c["chip"], (x + 2, y + 2, x + 4, y + 29), fill=dim(hue), outline="")
+        elif mode == "base":
+            self._tset(c["box"], (x, y, x + w - 1, y + 31), fill=T_FLAT, outline="", width=1, dash="")
+            self._tset(c["chip"], (x + 1, y + 1, x + 3, y + 30), fill=dim(hue), outline="")
+        else:
+            self._tset(c["box"], (x, y, x + w - 1, y + 31), fill=T_CARD, outline=dim(rcol), width=1, dash="")
+            self._tset(c["chip"], (x + 1, y + 1, x + 3, y + 30), fill=dim(hue), outline="")
+        nx = x + 10
+        if mode == "equip":
+            self._tset(c["stamp"], (nx + 1, y + 4, nx + 29, y + 16), fill="", outline=dim(hue), width=2)
+            self._tset(c["stamp_t"], (nx + 15, y + 10), text="장착", fill=dim(hue))
+            nx += 34
+        rx = x + w - 6
+        lv_col = _lerp_color(T_TEXT, T_PANEL, 0.35) if mode == "base" else T_TEXT
+        lv_txt = "Lv%d" % self._tint(eq.get("level"))
+        self._tset(c["lv"], (rx, y + 10), text=lv_txt, fill=dim(lv_col))
+        right = rx - self._tw(lv_txt, 10) - 4
+        owned = self._tint(eq.get("owned"))
+        if mode == "item" and owned > 0:
+            tg = "보유 %d" % owned
+            tgw = self._tw(tg, 10) + 8
+            self._tset(c["tag"], (right - tgw, y + 3, right - 1, y + 16), fill=dim(T_EDGE), outline="")
+            self._tset(c["tag_t"], (right - tgw / 2.0, y + 10), text=tg, fill=dim(T_TEXT))
+            right -= tgw + 4
+        ncol = rcol
+        if mode == "base":
+            ncol = _lerp_color(rcol, T_PANEL, 0.35)
+        elif not afford:
+            ncol = _lerp_color(rcol, T_PANEL, 0.5)
+        self._tset(c["name"], (nx, y + 11), text=self._fit(eq.get("name") or "?", -12, max(20, right - nx)), fill=dim(ncol), font=self._tfont(12, True))
+        # 2줄째: [가격] 효과 델타 · 힘/민/지 델타 (item) — 장착/기준 카드는 절대값.
+        # 토큰 = (라벨, 값, 값 색, 굵게): 라벨("힘", "연사")은 흐린색, 값("+3", "+12%")만 색을 입혀 숫자가 줄무늬가 아니라 숫자로 읽힌다
+        toks = []
+        tx = x + 10
+        if mode == "base":
+            toks.append(("", "비교 기준", _lerp_color(T_MUTED, T_PANEL, 0.25), False))
+        elif mode == "item" and sh["kind"] == "shop":
+            toks.append(("", self._tmoney(eq.get("price")), T_TEXT if afford else T_NEG, True))
+        ekey = sh["effect_key"]
+        elabel = sh["effect_label"]
+        fmt = "pct" if ekey in PCT_KEYS else "int"
+        abs_col = _lerp_color(T_TEXT, T_PANEL, 0.25)
+        if mode == "item":
+            de = eq.get("delta_effect") if isinstance(eq.get("delta_effect"), dict) else {}
+            d = self._fnum(de.get("after")) - self._fnum(de.get("now"))
+            if abs(d) > 1e-9:
+                toks.append((elabel, self._tfmt(d, fmt, sign=True), T_POS if d > 0 else T_NEG, True))
+            ds = eq.get("delta_stats") if isinstance(eq.get("delta_stats"), dict) else {}
+            stats = [(k, self._tint(ds.get(k))) for k in ("str", "agi", "int")]
+            stats = [s for s in stats if s[1]]
+            stats.sort(key=lambda s: -abs(s[1]))
+            for k, d in stats:
+                toks.append((STAT_SHORT[k], "%+d" % d, T_POS if d > 0 else T_NEG, True))
+            for lb in (eq.get("perk_labels") or [])[:2]:
+                off = str(lb).endswith(PERK_OFF_SUFFIX)               # 이 캐릭터가 못 쓰는 특전: 더 흐리게
+                toks.append(("", str(lb), _lerp_color(T_MUTED, T_PANEL, 0.35) if off else T_MUTED, False))
+        else:
+            fx = eq.get("effect") if isinstance(eq.get("effect"), dict) else {}
+            val = self._fnum(fx.get(ekey))
+            if abs(val) > 1e-9:
+                toks.append((elabel, self._tfmt(val, fmt, sign=True), abs_col, True))
             st = eq.get("stats") if isinstance(eq.get("stats"), dict) else {}
-            for k, (skey, sname) in enumerate((("str", "힘"), ("agi", "민"), ("int", "지"))):
-                try:
-                    v = int(st.get(skey, 0) or 0)
-                except (TypeError, ValueError):
-                    v = 0
-                self._card_line(c, 4 + k, x, y0 + 104 + 15 * k, "%s +%d" % (sname, v), size=8,
-                                fill="#c7d2e0" if v > 0 else LOCKED_FG, bold=False)
-            ptxt, pcol = self._perk_line(store, eq, rcol, dup=False)      # v2.0: 사기 전에 퍽이 보이게
-            self._card_line(c, 7, x, y0 + 150, self._fit(ptxt, 8, maxw), size=8, fill=pcol, bold=False)
-        for c in ui["cards"][n:]:
-            self._hide_card(c)
-        return n
+            for k in ("str", "agi", "int"):
+                d = self._tint(st.get(k))
+                if d:
+                    toks.append((STAT_SHORT[k], "%+d" % d, abs_col, True))
+        budget = x + w - 6 - tx
+        lw = lambda t: (self._tw(t[0], 10, False) + 3) if t[0] else 0        # noqa: E731  라벨 폭 (+3px 틈)
+        widths = [lw(t) + self._tw(t[1], 10, t[3]) for t in toks]
+        gap = 6
+        while toks and sum(widths) + gap * (len(toks) - 1) > budget:
+            toks.pop()
+            widths.pop()
+            if toks:
+                lb, t, col, b = toks[-1]
+                toks[-1] = (lb, t + "…", col, b)
+                widths[-1] = lw(toks[-1]) + self._tw(toks[-1][1], 10, b)
+        for k, it in enumerate(c["tok"]):
+            if k >= len(toks):
+                break
+            lb, t, col, b = toks[k]
+            vx = tx
+            if lb:
+                self._tset(c["tokl"][k], (tx, y + 24), text=lb, fill=dim(T_MUTED))
+                vx += lw(toks[k])
+            self._tset(it, (vx, y + 24), text=t, fill=dim(col), font=self._tfont(10, b))
+            tx += widths[k] + gap
+        if len(toks) > 4:                                          # 풀은 4개: 넘치면 price 슬롯을 5번째로 (라벨+값 한 덩어리)
+            lb, t, col, b = toks[4]
+            self._tset(c["price"], (tx, y + 24), text=(lb + " " + t) if lb else t, fill=dim(col), font=self._tfont(10, b))
 
-    def _town_store(self, ui, town, index, left, right, cy0, cy1) -> int:
-        store = town.get("store") if isinstance(town.get("store"), dict) else {}
-        equipped = store.get("equipped") if isinstance(store.get("equipped"), dict) else {}
-        items = list(store.get("items") or [])
-        mode = store.get("mode") or "list"
-        while len(ui["eq"]) < len(SLOT_ORDER):
-            ui["eq"].append(self._new_card(lines=4, tag=False, extra=0))     # v2.0: 4줄째 = 퍽
-        while len(ui["grid"]) < 24:
-            ui["grid"].append(self._new_card(lines=2, tag=False, extra=0))
-        inner = right - left - 32
-        # 위: 장착 6칸
-        cell = inner // len(SLOT_ORDER)
-        ey0, ey1 = cy0 + 2, cy0 + 60
-        row_on = mode == "equipped"
-        for j, slot in enumerate(SLOT_ORDER):
-            c = ui["eq"][j]
-            x = left + 16 + cell * j + cell // 2
-            bx0, bx1 = x - cell // 2 + 3, x + cell // 2 - 3
-            self.cv.coords(c["box"], bx0, ey0, bx1, ey1)
-            self.cv.itemconfig(c["box"], outline=_light_color(HUD_EDGE, 0.25) if row_on else _dim_color(HUD_EDGE, 0.7),
-                               fill=CARD_FILL, state="normal")
-            if row_on and j == index:
-                self.cv.coords(c["sel"], bx0 - 2, ey0 - 2, bx1 + 2, ey1 + 2)
-                self._show(c["sel"])
-            else:
-                self._hide(c["sel"])
-            eq = equipped.get(slot)
-            self._card_line(c, 0, x, ey0 + 3, SLOT_LABEL.get(slot, slot), size=8, fill=LOCKED_FG, bold=False)
+    def _town_stat_card(self, c: dict, sh: dict, x: float, y: float, w: int, on: bool, cursor: bool, v: dict) -> None:
+        s = sh["stat"]
+        hue = sh["hue"]
+        dim = (lambda col: col) if on else (lambda col: _lerp_color(col, T_PANEL, 0.25))
+        if cursor:
+            self._tset(c["box"], (x + 1, y + 1, x + w - 2, y + 30), fill=T_SEL, outline=T_GOLD, width=2, dash="")
+            self._tset(c["chip"], (x + 2, y + 2, x + 4, y + 29), fill=hue, outline="")
+        else:
+            self._tset(c["box"], (x, y, x + w - 1, y + 31), fill=T_CARD, outline=dim(T_EDGE), width=1, dash="")
+            self._tset(c["chip"], (x + 1, y + 1, x + 3, y + 30), fill=dim(hue), outline="")
+        maxed = s["max"] > 0 and s["level"] >= s["max"]
+        lv_txt = ("Lv %d/%d" % (s["level"], s["max"])) if s["max"] > 0 else ("Lv %d" % s["level"])
+        rx = x + w - 6
+        self._tset(c["lv"], (rx, y + 10), text=lv_txt, fill=dim(T_TEXT))
+        self._tset(c["name"], (x + 10, y + 11), text=self._fit(s["label"], -12, rx - self._tw(lv_txt, 10) - 4 - (x + 10)),
+                   fill=dim(T_MUTED if maxed else T_TEXT), font=self._tfont(12, True))
+        cost = "MAX" if maxed else (format(s["cost"], ",") + "점")   # 금색은 커서 테두리 · 헤더 ₩ 전용: 비용은 흰색 / 부족 빨강
+        self._tset(c["price"], (x + 10, y + 24), text=cost, fill=dim(T_MUTED if maxed else (T_TEXT if s["afford"] else T_NEG)),
+                   font=self._tfont(10, True))
+        preview = "최대 단계" if maxed else self._town_stat_values(sh, v)[1]     # "12 → 13" (스티커의 '현재 12' 와 짝)
+        if preview:
+            self._tset(c["tok"][0], (x + 10 + self._tw(cost, 10) + 8, y + 24), text=preview, fill=dim(T_MUTED), font=self._tfont(10, False))
+
+    def _town_stat_values(self, sh: dict, v: dict) -> tuple:
+        """스탯 강화 항목의 (스티커 부제 = 현재 값, 카드 2줄째 = 강화 미리보기). 값은 hud.town.char 에서 온다."""
+        key = sh["slot"]
+        lv = self._tint(sh["stat"]["level"])
+        ch = v["char"]
+        st = ch.get("stats") if isinstance(ch.get("stats"), dict) else {}
+        if key in st:
+            n = self._tint(st.get(key))
+            return "현재 %d" % n, "%d → %d" % (n, n + 1)
+        if key == "rate":
+            p = 20 * lv
+            return "현재 +%d%%" % p, "+%d%% → +%d%%" % (p, p + 20)
+        if key == "shield":
+            sm = self._tint(ch.get("shield_max"))
+            return "최대 %d" % sm, "%d → %d" % (sm, sm + 1)
+        if key == "life":
+            n = self._tint(ch.get("lives"))
+            return "현재 %d" % n, "%d → %d" % (n, min(9, n + 1))
+        return "Lv %d" % lv, ""
+
+    def _town_gamble_card(self, c: dict, sh: dict, x: float, y: float, w: int, on: bool, cursor: bool, v: dict, g: dict) -> None:
+        gm = sh["gamble"]
+        hue = sh["hue"]
+        dim = (lambda col: col) if on else (lambda col: _lerp_color(col, T_PANEL, 0.25))
+        if cursor:
+            self._tset(c["box"], (x + 1, y + 1, x + w - 2, y + 30), fill=T_SEL, outline=T_GOLD, width=2, dash="")
+            self._tset(c["chip"], (x + 2, y + 2, x + 4, y + 29), fill=hue, outline="")
+        else:
+            self._tset(c["box"], (x, y, x + w - 1, y + 31), fill=T_CARD, outline=dim(T_EDGE), width=1, dash="")
+            self._tset(c["chip"], (x + 1, y + 1, x + 3, y + 30), fill=dim(hue), outline="")
+        i = gm["i"]
+        nx, rx = x + 10, x + w - 6
+        if i == 0:
+            eq = gm["eq"]
             if isinstance(eq, dict):
-                rarity = eq.get("rarity") or "normal"
-                rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
-                self._card_line(c, 1, x, ey0 + 15, self._fit(eq.get("name") or "?", 9, cell - 14), size=9, fill=TEXT_FG)
-                self._card_line(c, 2, x, ey0 + 29, "%s · Lv %s" % (RARITY_LABEL.get(rarity, rarity), eq.get("level", 0)),
-                                size=8, fill=rcol, bold=False)
-                ptxt, pcol = self._perk_line(store, eq, rcol)               # v2.0: 퍽 라벨 (미적용 / 중복은 회색)
-                self._card_line(c, 3, x, ey0 + 44, self._fit(ptxt, 8, cell - 14), size=8, fill=pcol, bold=False)
+                rcol = RARITY_COLORS.get(eq.get("rarity") or "normal", RARITY_COLORS["normal"])
+                lv_txt = "Lv%d" % self._tint(eq.get("level"))
+                self._tset(c["lv"], (rx, y + 10), text=lv_txt, fill=dim(T_TEXT))
+                self._tset(c["name"], (nx, y + 11), text=self._fit(eq.get("name") or "?", -12, rx - self._tw(lv_txt, 10) - 4 - nx), fill=dim(rcol),
+                           font=self._tfont(12, True))
+                down = 1 if eq.get("rarity") == "unique" else 3
+                self._tset(c["price"], (nx, y + 24), text="비용 " + self._tmoney(gm["cost"]), fill=dim(T_TEXT if v["money"] >= gm["cost"] else T_NEG),
+                           font=self._tfont(10, True))
+                self._tset(c["tok"][0], (nx + self._tw("비용 " + self._tmoney(gm["cost"]), 10) + 6, y + 24),
+                           text="60%% ↑2 · 30%% – · 10%% ↓%d" % down, fill=dim(T_MUTED), font=self._tfont(10, False))
             else:
-                self._card_line(c, 1, x, ey0 + 22, "—", size=11, fill=LOCKED_FG)
-                self._card_line(c, 2, x, ey0 + 40, "", size=8)
-                self._card_line(c, 3, x, ey0 + 44, "", size=8)
-        # 아래: 창고 12×2
-        gcell = inner // 12
-        gh = 40
-        gy0 = ey1 + 10
-        list_on = mode != "equipped"
-        for k, c in enumerate(ui["grid"]):
-            col, row = k % 12, k // 12
-            x = left + 16 + gcell * col + gcell // 2
-            y = gy0 + row * (gh + 6)
-            bx0, bx1 = x - gcell // 2 + 2, x + gcell // 2 - 2
-            self.cv.coords(c["box"], bx0, y, bx1, y + gh)
-            eq = items[k] if k < len(items) else None
-            self.cv.itemconfig(c["box"], outline=_light_color(HUD_EDGE, 0.25) if list_on else _dim_color(HUD_EDGE, 0.7),
-                               fill=CARD_FILL if isinstance(eq, dict) else _dim_color(CARD_FILL, 0.8), state="normal")
-            if list_on and k == index:
-                self.cv.coords(c["sel"], bx0 - 2, y - 2, bx1 + 2, y + gh + 2)
-                self._show(c["sel"])
-            else:
-                self._hide(c["sel"])
-            if isinstance(eq, dict):
-                rarity = eq.get("rarity") or "normal"
-                rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
-                self._card_line(c, 0, x, y + 4, self._fit(eq.get("name") or "?", 8, gcell - 10), size=8, fill=rcol)
-                star = {"rare": " ★", "unique": " ★★"}.get(rarity, "")      # v2.0: 퍽 개수 = 등급
-                self._card_line(c, 1, x, y + 21, "%s Lv%s%s" % (SLOT_LABEL.get(eq.get("slot"), "")[:3], eq.get("level", 0), star),
-                                size=8, fill="#c7d2e0", bold=False)
-            else:
-                self._card_line(c, 0, x, y + 12, "—", size=9, fill=_dim_color(LOCKED_FG, 0.8))
-                self._card_line(c, 1, x, y + 24, "", size=8)
-        return len(SLOT_ORDER) if row_on else len(items)
-
-    def _new_gamble_panel(self) -> dict:
-        return {"box": self.cv.create_rectangle(0, 0, 0, 0, fill=CARD_FILL, outline=HUD_EDGE, width=1),
-                "title": self._text2(0, 0, "", size=11, anchor="n"),
-                "lines": [self._text2(0, 0, "", size=9, anchor="n") for _ in range(5)],
-                "coin": self.cv.create_oval(0, 0, 0, 0, fill=COIN_FILL, outline=COIN_EDGE, width=2),
-                "coin_hi": self.cv.create_oval(0, 0, 0, 0, fill="#fff5cc", outline=""),
-                "reels": [self.cv.create_rectangle(0, 0, 0, 0, fill=WORD_BG, outline=HUD_EDGE, width=2) for _ in range(3)],
-                "reeltxt": [self._text2(0, 0, "", size=20, anchor="center") for _ in range(3)]}
-
-    def _hide_gamble(self, g: dict) -> None:
-        self._hide(g["box"]); self._hide(g["coin"]); self._hide(g["coin_hi"])
-        for it in g["title"]:
-            self._hide(it)
-        for pair in g["lines"] + g["reeltxt"]:
-            for it in pair:
-                self._hide(it)
-        for it in g["reels"]:
-            self._hide(it)
-
-    def _gamble_line(self, g: dict, i: int, x, y, text, size=9, fill=TEXT_FG, bold=True) -> None:
-        pair = g["lines"][i]
-        f = (FONT, int(size), "bold" if bold else "normal")
-        for it in pair:
-            self.cv.itemconfig(it, font=f, state="normal")
-        self._set_text2(pair, x, y, text, fill=fill)
-
-    def _town_gamble(self, ui, town, index, left, right, cy0, cy1, now) -> int:
-        gm = town.get("gamble") if isinstance(town.get("gamble"), dict) else {}
-        games = gm.get("games") if isinstance(gm.get("games"), list) else ["강화 도박", "더블업", "슬롯"]
-        n = 3
-        while len(ui["gamble"]) < n:
-            ui["gamble"].append(self._new_gamble_panel())
-        try:
-            active = int(gm.get("game") if gm.get("game") is not None else index)
-        except (TypeError, ValueError):
-            active = 0
-        if index < n:
-            active = index
-        inner = right - left - 32
-        cell = inner // n
-        y0, y1 = cy0 + 2, cy1 - 4
-        reels = gm.get("reels") if isinstance(gm.get("reels"), list) else None
-        stake = gm.get("stake")
-        try:
-            streak = int(gm.get("streak") or 0)
-        except (TypeError, ValueError):
-            streak = 0
-        for i in range(n):
-            g = ui["gamble"][i]
-            x = left + 16 + cell * i + cell // 2
-            bx0, bx1 = x - cell // 2 + 4, x + cell // 2 - 4
-            is_on = i == active
-            self.cv.coords(g["box"], bx0, y0, bx1, y1)
-            self.cv.itemconfig(g["box"], outline=CARD_SEL if is_on else HUD_EDGE, width=2 if is_on else 1,
-                               fill=_light_color(CARD_FILL, 0.06) if is_on else CARD_FILL, state="normal")
-            title = str(games[i]) if i < len(games) else ("강화 도박", "더블업", "슬롯")[i]
-            self._set_text2(g["title"], x, y0 + 6, ("◆ %s" % title) if is_on else title, fill=CARD_SEL if is_on else "#c7d2e0")
-            for it in g["title"]:
-                self._show(it)
-            # 기본: 코인/릴 숨김, 글줄 5개 비움
-            self._hide(g["coin"]); self._hide(g["coin_hi"])
-            for it in g["reels"]:
-                self._hide(it)
-            for pair in g["lines"] + g["reeltxt"]:
-                for it in pair:
-                    self._hide(it)
-            if i == 0:
-                # 강화 도박: 대상 장비 카드(글줄) + 확률표
-                # v2.0: game 은 target(economy.SLOTS 인덱스) 와 함께 target_eq(장착 장비 dict) · target_cost(도박 비용) 를 준다
-                eq = gm.get("target_eq") if isinstance(gm.get("target_eq"), dict) else None
-                if isinstance(eq, dict):
-                    rarity = eq.get("rarity") or "normal"
-                    rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
-                    self._gamble_line(g, 0, x, y0 + 30, self._fit(eq.get("name") or "?", 10, cell - 30), size=10, fill=TEXT_FG)
-                    self._gamble_line(g, 1, x, y0 + 50, "%s · %s · Lv %s" % (SLOT_LABEL.get(eq.get("slot"), eq.get("slot", "")),
-                                                                            RARITY_LABEL.get(rarity, rarity), eq.get("level", 0)),
-                                      size=9, fill=rcol, bold=False)
-                    cost = self._eq_price({"price": gm.get("target_cost")}) if gm.get("target_cost") is not None else None
-                    self._gamble_line(g, 2, x, y0 + 70, ("비용 " + self._money_text(cost)) if cost is not None else "", size=9, fill=MONEY_FG)
+                self._tset(c["name"], (nx, y + 11), text="장착한 장비 없음", fill=dim(T_MUTED), font=self._tfont(12, True))
+                self._tset(c["price"], (nx, y + 24), text="창고 탭에서 장비를 장착하세요", fill=dim(_lerp_color(T_MUTED, T_PANEL, 0.3)), font=self._tfont(10, False))
+        elif i == 1:
+            mult = max(1, 2 ** min(gm["streak"], 3))
+            self._tset(c["name"], (nx, y + 11), text="판돈 " + self._tmoney(gm["stake"]), fill=dim(T_TEXT), font=self._tfont(12, True))
+            self._tset(c["lv"], (rx, y + 10), text="연속 ×%d" % mult, fill=dim(T_POS if gm["streak"] else T_TEXT))
+            self._tset(c["price"], (nx, y + 24), text="50% 로 두 배 · 연속 성공 최대 ×8", fill=dim(T_MUTED), font=self._tfont(10, False))
+        else:
+            self._tset(c["name"], (nx, y + 11), text="판돈 " + self._tmoney(gm["bet"]), fill=dim(T_TEXT), font=self._tfont(12, True))
+            txt = gm["text"] or "7 7 7 ×30 + 유니크 · ₩₩₩ ×10 · ★★★ 레어"
+            self._tset(c["price"], (nx, y + 24), text=self._fit(txt, -10, w - 120), fill=dim(T_MUTED), font=self._tfont(10, False))
+            reels = gm["reels"]
+            now = g["now"]
+            for j, (box, txt_it) in enumerate(self.town_ui["reels"]):
+                bx = rx - 26 * (3 - j) + 2
+                spinning = not reels or j >= len(reels)
+                if spinning:
+                    sym = SLOT_SYMBOLS[int(now * 14 + j * 2) % len(SLOT_SYMBOLS)]
+                    col = _lerp_color(T_MUTED, T_PANEL, 0.5 if int(now * 28 + j) % 2 else 0.2)
                 else:
-                    self._gamble_line(g, 0, x, y0 + 34, "대상 장비 없음", size=10, fill=LOCKED_FG)
-                    self._gamble_line(g, 1, x, y0 + 54, "창고에 장비를 넣어 두세요", size=8, fill=LOCKED_FG, bold=False)
-                down = 1 if isinstance(eq, dict) and eq.get("rarity") == "unique" else 3   # economy: 유니크 실패는 -1
-                self._gamble_line(g, 3, x, y0 + 96, "60% ↑2   /   30% –   /   10% ↓" + str(down), size=10, fill="#c7d2e0")
-                self._gamble_line(g, 4, x, y0 + 118, "강화 레벨을 걸고 주사위를 굴린다", size=8, fill=LOCKED_FG, bold=False)
-            elif i == 1:
-                # 더블업: 판돈 · 연속 ×N · 뒤집히는 코인
-                self._gamble_line(g, 0, x - 60, y0 + 34, "판돈", size=9, fill=LOCKED_FG, bold=False)
-                self._gamble_line(g, 1, x - 60, y0 + 50, self._money_text(stake) if stake is not None else "₩ —", size=11, fill=MONEY_FG)
-                self._gamble_line(g, 2, x - 60, y0 + 76, "연속", size=9, fill=LOCKED_FG, bold=False)
-                self._gamble_line(g, 3, x - 60, y0 + 92, "×%d" % max(1, 2 ** min(streak, 3)), size=16, fill="#fff5cc" if streak else "#c7d2e0")
-                self._gamble_line(g, 4, x, y0 + 124, "50% 로 두 배 · 연속 성공 최대 ×8", size=8, fill=LOCKED_FG, bold=False)
-                ccx, ccy = x + 50, y0 + 74
-                squash = abs(math.cos(now * 6.0)) if reels is None else 1.0
-                rw = 6 + 18 * squash
-                self.cv.coords(g["coin"], ccx - rw, ccy - 24, ccx + rw, ccy + 24)
-                self._show(g["coin"])
-                if squash > 0.5:
-                    self.cv.coords(g["coin_hi"], ccx - rw * 0.35, ccy - 14, ccx + rw * 0.15, ccy - 4)
-                    self._show(g["coin_hi"])
+                    sym = str(reels[j])
+                    col = {"7": T_NEG, "★": T_GOLD, "₩": T_POS, "◆": "#4cc9f0", "♥": T_NEG}.get(sym, T_TEXT)
+                self._tset(box, (bx, y + 4, bx + 23, y + 27), fill=T_GROUND, outline=dim(T_EDGE))
+                self._tset(txt_it, (bx + 12, y + 16), text=sym, fill=dim(col))
+
+    def _town_compare_empty(self, cp: dict, v: dict, g: dict) -> None:
+        """compare 가 None(창고 고스트 / 재고 없는 상점 선반)일 때: 오른쪽 칸이 통째로 비지 않게 빈 비교표 틀 + 슬롯 이름 + 안내 한 줄."""
+        row = v["cursor"]["row"]
+        shelves = v["shelves"]
+        if v["on_next"] or v["on_box"] or row >= len(shelves) or shelves[row]["kind"] not in ("store", "shop"):
+            return
+        sh = shelves[row]
+        X, Y = g["X"], g["Y"]
+        x0, y0 = X(1216), Y(46) + g["u"]
+        h = 240 + 6 * g["u"]
+        hue = _lerp_color(sh["hue"], T_PANEL, 0.45)
+        self._tset(cp["box"], (x0, y0, x0 + 303, y0 + h - 1), fill=T_CARD, outline=T_EDGE)
+        self._tset(cp["stripe"], (x0 + 1, y0 + 1, x0 + 302, y0 + 3), fill=hue, outline="")
+        title = ("%s 없음" if sh["kind"] == "store" else "%s 재고 없음") % sh["label"]
+        self._tset(cp["name"], (x0 + 12, y0 + 17), text=self._fit(title, -14, 280), fill=T_MUTED)
+        self._tglyph(cp["glyph"], sh["glyph"], x0 + 12, y0 + 27, 12, hue, T_CARD)
+        self._tset(cp["sub2"], (x0 + 28, y0 + 33), text=sh["label"] + " 슬롯", fill=hue)
+        self._tset(cp["rules"][0], (x0 + 12, y0 + 58, x0 + 291, y0 + 58), fill=T_EDGE, outline="")
+        n = sh["count"]
+        if sh["kind"] == "store":
+            lines = (("빈 슬롯 · %s 효과 없음" % sh["effect_label"]),
+                     ("→ 창고 카드 %d장 중 하나를 고르면 비교표가 뜹니다" % n) if n else "창고에 해당 장비 없음 · 상점에서 사면 바로 장착")
+        else:
+            lines = ("이번 마을에는 재고가 없습니다", "↑↓ 다른 선반 · 랜덤박스에서 나올 수도 있습니다")
+        self._tset(cp["hdr"][0], (x0 + 12, y0 + 72), text=self._fit(lines[0], -10, 280))
+        self._tset(cp["after_msg"], (x0 + 12, y0 + 226), text=self._fit(lines[1], -10, 280))
+
+    def _town_compare(self, cp: dict, v: dict, g: dict) -> None:
+        cmp_ = v["compare"]
+        if not isinstance(cmp_, dict):
+            self._town_compare_empty(cp, v, g)
+            return
+        X, Y = g["X"], g["Y"]
+        x0, y0 = X(1216), Y(46) + g["u"]
+        h = 240 + 6 * g["u"]
+        self._tset(cp["box"], (x0, y0, x0 + 303, y0 + h - 1), fill=T_CARD, outline=T_EDGE)
+        rarity = cmp_.get("rarity") or "normal"
+        rcol = RARITY_COLORS.get(rarity, RARITY_COLORS["normal"])
+        action = cmp_.get("action") or "equip"
+        slot = cmp_.get("slot")
+        hue = SLOT_HUES.get(slot) or TOWN_STAT_HUES.get(slot) or (TOWN_GAMBLE_HUES[self._tint(str(slot)[1:])] if str(slot).startswith("g") and str(slot)[1:].isdigit() else T_MUTED)
+        stripe = rcol if action in ("equip", "unequip", "buy") else hue
+        self._tset(cp["stripe"], (x0 + 1, y0 + 1, x0 + 302, y0 + 3), fill=stripe, outline="")
+        self._tset(cp["name"], (x0 + 12, y0 + 17), text=self._fit(cmp_.get("name") or "—", -14, 280), fill=stripe)
+        # 부제: 글리프 · 희귀도 · Lv · 슬롯
+        gx = x0 + 12
+        glyph = cmp_.get("glyph") if cmp_.get("glyph") in TOWN_GLYPHS else (slot if slot in TOWN_GLYPHS else ("box" if action == "box" else None))
+        if glyph is None and str(slot).startswith("g") and str(slot)[1:].isdigit():
+            glyph = self.TOWN_GAMBLE_GLYPHS[int(str(slot)[1:]) % 3]
+        if glyph:
+            self._tglyph(cp["glyph"], glyph, gx, y0 + 27, 12, hue, T_CARD)
+            gx += 16
+        parts = []
+        if action in ("equip", "unequip", "buy"):
+            parts.append(RARITY_LABEL.get(rarity, str(rarity)))
+        if cmp_.get("level") is not None:
+            parts.append("Lv%d" % self._tint(cmp_.get("level")))
+        sub1 = (" · ".join(parts) + " · ") if parts else ""
+        self._tset(cp["sub1"], (gx, y0 + 33), text=sub1)
+        gx += self._tw(sub1, 10, False)
+        slot_label = str(cmp_.get("slot_label") or SLOT_LABEL.get(slot, ""))
+        self._tset(cp["sub2"], (gx, y0 + 33), text=(slot_label + (" 슬롯" if action in ("equip", "unequip", "buy") else "")), fill=hue)
+        cols = cmp_.get("cols") if isinstance(cmp_.get("cols"), (list, tuple)) and len(cmp_.get("cols")) >= 3 else \
+            ("현재", self.TOWN_AFTER_LABEL.get(action, "장착 후"), "변화")
+        hx = (x0 + 12, X(1368), X(1440), X(1508))
+        rows = [r for r in (cmp_.get("rows") or []) if isinstance(r, dict)][:4]
+        if rows:
+            for k, it in enumerate(cp["hdr"]):
+                self._tset(it, (hx[k], y0 + 49), text=("능력치" if k == 0 else str(cols[k - 1])))
+            self._tset(cp["rules"][0], (x0 + 12, y0 + 58, x0 + 291, y0 + 58), fill=T_EDGE, outline="")
+        for k, r in enumerate(rows):
+            p = cp["rows"][k]
+            ry = y0 + 72 + 22 * k
+            fmt = r.get("fmt") or ("pct" if str(r.get("label")) in PCT_LABELS else "int")
+            lx = x0 + 12
+            if k == 3 and glyph and action in ("equip", "unequip", "buy"):
+                self._tglyph(p["glyph"], glyph, lx, ry - 6, 12, hue, T_CARD)
+                lx += 16
+            self._tset(p["label"], (lx, ry), text=str(r.get("label") or ""), fill=T_TEXT if k == 3 else T_MUTED)
+            self._tset(p["now"], (hx[1], ry), text=self._tfmt(r.get("now"), fmt))
+            d = r.get("delta")
+            dn = None
+            if not isinstance(d, str):
+                dn = self._fnum(d) if d is not None else 0.0
+            changed = (dn is not None and abs(dn) > 1e-9) or (isinstance(d, str) and d not in ("", "·"))
+            col = T_TEXT
+            if dn is not None and abs(dn) > 1e-9:
+                col = T_POS if dn > 0 else T_NEG
+            elif isinstance(d, str) and d.startswith("-"):
+                col = T_NEG
+            elif isinstance(d, str) and d.startswith("+"):
+                col = T_POS
+            self._tset(p["after"], (hx[2], ry), text=self._tfmt(r.get("after"), fmt), fill=col if changed else T_TEXT, font=self._tfont(12, changed))
+            dtxt = d if isinstance(d, str) else (self._tfmt(dn, fmt, sign=True) if (dn is not None and abs(dn) > 1e-9) else "·")
+            self._tset(p["delta"], (hx[3], ry), text=dtxt, fill=col if changed else T_EDGE, font=self._tfont(12, changed))
+        # 특전 칩 + 설명 한 줄: 장비(장착/해제/구매)와 특전이 있는 강화 도박에만. 스탯/도박/다음/상자는 특전 구역을 접고
+        # 가격 줄을 22px 끌어올린다 ('특전 —' 같은 빈 줄 금지)
+        perks = [p for p in (cmp_.get("perks") or []) if isinstance(p, dict)][:2]
+        gear = action in ("equip", "unequip", "buy")
+        show_perks = bool(perks) or (gear and bool(rows))
+        if show_perks:
+            self._tset(cp["rules"][1], (x0 + 12, y0 + 152, x0 + 291, y0 + 152), fill=T_EDGE, outline="")
+            self._tset(cp["perk_lbl"], (x0 + 12, y0 + 166), text="특전")
+        cx = x0 + 44
+        for k, (rect, txt) in enumerate(cp["chips"]):
+            if k >= len(perks):
+                break
+            lb = self._fit(str(perks[k].get("label") or ""), -10, max(24, x0 + 291 - cx - 8))
+            off = lb.endswith(PERK_OFF_SUFFIX)                        # 이 캐릭터가 못 쓰는 특전: 칩을 흐리게
+            cw = self._tw(lb, 10) + 8
+            self._tset(rect, (cx, y0 + 158, cx + cw - 1, y0 + 173), fill=_lerp_color(T_EDGE, T_PANEL, 0.4) if off else T_EDGE, outline="")
+            self._tset(txt, (cx + cw / 2.0, y0 + 166), text=lb, fill=_lerp_color(T_MUTED, T_PANEL, 0.3) if off else T_TEXT)
+            cx += cw + 4
+        if perks:
+            ptxt = " · ".join(str(p.get("text") or "") for p in perks if p.get("text"))
+            self._tset(cp["perk_txt"], (x0 + 44, y0 + 182), text=self._fit(ptxt, -10, 248), fill="#a3acbc")
+        elif show_perks:
+            self._tset(cp["perk_txt"], (x0 + 44, y0 + 166), text="없음", fill=_lerp_color(T_MUTED, T_PANEL, 0.3))
+        py = 208 if show_perks else 186                            # 가격 줄 y (특전 구역이 없으면 22px 위로)
+        self._tset(cp["rules"][2], (x0 + 12, y0 + py - 14, x0 + 291, y0 + py - 14), fill=T_EDGE, outline="")
+        # 가격 줄: 판매 · 강화 / 구매 · 잔액 / 비용 · 잔여
+        unit = str(cmp_.get("unit") or ("점" if action == "stat" else ""))
+        money = v["money"]
+        fmt_cost = (lambda n: format(self._tint(n), ",") + unit) if unit else self._tmoney
+        afford = bool(cmp_.get("afford", True))
+        p1 = p2 = None
+        if action == "equip":
+            p1 = ("판매", fmt_cost(cmp_.get("sell")), T_TEXT) if cmp_.get("sell") is not None else None
+            p2 = ("장착 후 강화 " + fmt_cost(cmp_.get("enhance")), "", T_MUTED) if cmp_.get("enhance") is not None else None
+        elif action == "unequip":
+            if cmp_.get("enhance") is not None:
+                p1 = ("강화", fmt_cost(cmp_.get("enhance")), T_GOLD if money >= self._tint(cmp_.get("enhance")) else T_NEG)
+            p2 = ("판매가 " + fmt_cost(cmp_.get("sell")), "", T_MUTED) if cmp_.get("sell") is not None else None
+        elif action == "buy" or action == "box":
+            cost = self._tint(cmp_.get("buy"))
+            ok = afford and money >= cost
+            p1 = ("구매", fmt_cost(cost), T_GOLD if ok else T_NEG)
+            p2 = ("잔액", fmt_cost(money - cost), T_TEXT) if ok else ("부족", fmt_cost(cost - money), T_NEG)
+        elif action == "stat":
+            cost = self._tint(cmp_.get("buy"))
+            ok = afford and v["score"] >= cost
+            p1 = ("비용", fmt_cost(cost), T_GOLD if ok else T_NEG)
+            p2 = ("잔여", fmt_cost(v["score"] - cost), T_TEXT) if ok else ("부족", fmt_cost(cost - v["score"]), T_NEG)
+        elif action == "gamble":
+            cost = self._tint(cmp_.get("buy"))
+            p1 = ("판돈", fmt_cost(cost), T_GOLD if money >= cost else T_NEG)
+            p2 = ("잔액", fmt_cost(money), T_TEXT)
+        if p1:
+            self._tset(cp["p1_lbl"], (x0 + 12, y0 + py), text=p1[0])
+            self._tset(cp["p1_val"], (x0 + 12 + self._tw(p1[0], 10, False) + 4, y0 + py), text=p1[1], fill=p1[2])
+        if p2:
+            if p2[1]:
+                self._tset(cp["p2_val"], (X(1508), y0 + py), text=p2[1], fill=p2[2])
+                self._tset(cp["p2"], (X(1508) - self._tw(p2[1], 12) - 4, y0 + py), text=p2[0])
             else:
-                # 슬롯: 릴 3개 (None 이면 돌아가는 반짝임) + 배당 문구
-                for j in range(3):
-                    rx = x + (j - 1) * 52
-                    ry = y0 + 52
-                    self.cv.coords(g["reels"][j], rx - 22, ry - 22, rx + 22, ry + 22)
-                    spinning = reels is None or j >= len(reels)
-                    self.cv.itemconfig(g["reels"][j], outline=_lerp_color(HUD_EDGE, CARD_SEL, 0.5 + 0.5 * math.sin(now * 10 + j))
-                                       if spinning else HUD_EDGE, state="normal")
-                    if spinning:
-                        sym = SLOT_SYMBOLS[int(now * 14 + j * 2) % len(SLOT_SYMBOLS)]
-                        col = _dim_color("#c7d2e0", 0.6 if int(now * 28 + j) % 2 else 0.9)
-                    else:
-                        sym = str(reels[j])
-                        col = {"7": "#ff5252", "★": CARD_SEL, "₩": "#4ade80", "◆": "#4cc9f0", "♥": "#ff6b6b"}.get(sym, TEXT_FG)
-                    self._set_text2(g["reeltxt"][j], rx, ry, sym, fill=col)
-                    for it in g["reeltxt"][j]:
-                        self._show(it)
-                pay = gm.get("text") or gm.get("payout_text") or ""
-                if not pay and gm.get("payout") is not None:
-                    pay = "배당 " + self._money_text(gm.get("payout"))
-                self._gamble_line(g, 0, x, y0 + 84, str(pay), size=10, fill=MONEY_FG if pay else LOCKED_FG)
-                self._gamble_line(g, 1, x, y0 + 104, "777 잭팟 ×30 + 유니크 · ★★★ 레어 · ₩₩₩ ×10", size=8, fill="#c7d2e0", bold=False)
-                self._gamble_line(g, 2, x, y0 + 118, "판돈 %s" % (self._money_text(stake) if stake is not None else "—"), size=8, fill=LOCKED_FG, bold=False)
-        for g in ui["gamble"][n:]:
-            self._hide_gamble(g)
-        return n
+                self._tset(cp["p2"], (X(1508), y0 + py), text=p2[0])
+        self._tset(cp["after_msg"], (x0 + 12, y0 + py + 18), text=self._fit(str(cmp_.get("after_msg") or ""), -10, 280))
+
+    def _town_msg_segments(self, msg: str, v: dict) -> list:
+        """푸터 메시지 → [(kind, text)]: "key"(키캡) · "tag"(슬롯 태그, hue) · "text"."""
+        labels = {}
+        for sh in v["shelves"]:
+            labels[sh["label"]] = sh["hue"]
+        for k, lb in SLOT_LABEL.items():
+            labels.setdefault(lb, SLOT_HUES.get(k, T_MUTED))
+        out = []
+        for chunk in re.split(r"(\[[^\]]+\])", msg):
+            if not chunk:
+                continue
+            if chunk.startswith("[") and chunk.endswith("]"):
+                inner = chunk[1:-1]
+                if inner in labels:
+                    out.append(("tag", inner, labels[inner]))
+                elif inner in self.TOWN_KEYS:
+                    out.append(("key", inner, None))
+                else:
+                    out.append(("text", chunk, None))
+                continue
+            for j, piece in enumerate(chunk.split(" · ")):
+                if j:
+                    out.append(("text", " · ", None))
+                m = re.match(r"^(Enter|Space|Tab|Esc|←→|↑↓|[←→↑↓C])\s+", piece)
+                if m:
+                    out.append(("key", m.group(1), None))
+                    piece = piece[m.end():]
+                if piece:
+                    out.append(("text", piece, None))
+        return out
+
+    def _town_footer(self, ui: dict, v: dict, g: dict) -> None:
+        X, Y = g["X"], g["Y"]
+        fy = Y(296) + g["extra"]
+        # 키 범례 (왼쪽)
+        x = X(80)
+        for k, (kc, verb) in enumerate(ui["legend"]):
+            if k >= len(v["legend"]):
+                break
+            entry = v["legend"][k]
+            try:
+                key, vb = str(entry[0]), str(entry[1])
+            except (TypeError, IndexError, KeyError):
+                continue
+            kw = self._tkeycap(kc, x, fy + 8, key)
+            self._tset(verb, (x + kw + 6, fy + 16), text=vb)
+            x += kw + 6 + self._tw(vb, 11, False) + 14
+        # 랜덤박스 줄 (상점)
+        right = X(1520)
+        if v["box"]:
+            b = v["box"]
+            br = ui["boxrow"]
+            on = v["on_box"]
+            bx, by = X(1216), fy
+            if on:
+                self._tset(br["box"], (bx + 1, by + 1, bx + 302, by + 30), fill=T_SEL, outline=T_GOLD, width=2)
+            else:
+                self._tset(br["box"], (bx, by, bx + 303, by + 31), fill=T_CARD, outline=T_EDGE, width=1)
+            self._tkeycap(br["key"], bx + 8, by + 7, "Enter" if on else "↓", fg=T_GOLD if on else T_TEXT, edge=T_GOLD if on else T_EDGE)
+            self._tglyph(br["glyph"], "box", bx + 44 + (12 if on else 0), by + 8, 16, T_TEXT, T_SEL if on else T_CARD)
+            nx = bx + 68 + (12 if on else 0)
+            self._tset(br["name"], (nx, by + 11), text=b["label"], fill=T_TEXT)
+            self._tset(br["sub"], (nx, by + 24), text=b["sub"])
+            self._tset(br["price"], (bx + 296, by + 16), text=self._tmoney(b["price"]), fill=T_TEXT if b["afford"] else T_NEG)
+            right = X(1200)
+        else:
+            # 다음 스테이지 카드 (창고/스탯/도박장): "다음" 줄의 몸통 커서 — 커서가 오면 금색 통채움 + 바탕색 글자 (peel)
+            nr = ui["nextrow"]
+            on = v["on_next"]
+            bx, by = X(1216), fy
+            if on:
+                self._tset(nr["box"], (bx + 1, by + 1, bx + 302, by + 30), fill=T_GOLD, outline=T_GOLD, width=2)
+                kw = self._tkeycap(nr["key"], bx + 8, by + 7, "Enter", fg=T_GOLD, bg=T_GROUND, edge=T_GROUND)
+                self._tset(nr["name"], (bx + 16 + kw, by + 11), text="다음 스테이지 ▶", fill=T_GROUND, font=self._tfont(12, True))
+                self._tset(nr["sub"], (bx + 16 + kw, by + 24), text=("%d스테이지 시작" % (v["stage"] + 1)) if v["stage"] else "Enter 로 출발",
+                           fill=_lerp_color(T_GROUND, T_GOLD, 0.3))
+            else:
+                self._tset(nr["box"], (bx, by, bx + 303, by + 31), fill=T_CARD, outline=T_EDGE, width=1)
+                kw = self._tkeycap(nr["key"], bx + 8, by + 7, "Esc", fg=T_TEXT, bg=T_CARD, edge=T_EDGE)
+                self._tset(nr["name"], (bx + 16 + kw, by + 11), text="다음 스테이지 ▶", fill=T_TEXT, font=self._tfont(12, True))
+                self._tset(nr["sub"], (bx + 16 + kw, by + 24), text=("%d스테이지 시작 · Esc 로 선택" % (v["stage"] + 1)) if v["stage"] else "Esc 로 선택",
+                           fill=T_MUTED)
+            right = X(1200)
+        # 컨텍스트 메시지 (오른쪽 정렬, 슬롯 태그 + 키캡)
+        segs = self._town_msg_segments(v["msg"], v)[:len(ui["msg"])]
+        widths = []
+        for kind, text, hue in segs:
+            if kind == "key":
+                widths.append(self._tw(text, 10) + 8 + 4)
+            elif kind == "tag":
+                widths.append(self._tw(text, 10) + 8 + 4)
+            else:
+                widths.append(self._tw(text, 11, False))
+        total = sum(widths)
+        max_w = right - (x + 8)
+        while segs and total > max_w:                              # 넘치면 앞의 조각부터 버린다 (핵심은 뒤쪽)
+            segs.pop(0)
+            total -= widths.pop(0)
+        sx = right - total
+        for k, (kind, text, hue) in enumerate(segs):
+            rect, txt = ui["msg"][k]
+            if kind == "key":
+                self._tkeycap((rect, txt), sx, fy + 8, text)
+            elif kind == "tag":
+                w = self._tw(text, 10) + 8
+                self._tset(rect, (sx, fy + 9, sx + w - 1, fy + 22), fill=hue, outline="")
+                self._tset(txt, (sx + w / 2.0, fy + 16), text=text, fill=T_GROUND, font=self._tfont(10, True), anchor="center")
+            else:
+                self._tset(txt, (sx, fy + 16), text=text, fill=T_TEXT, font=self._tfont(11, False), anchor="w")
+            sx += widths[k]
 
 
 class App:
@@ -2619,7 +3373,7 @@ class App:
         self.restart_exe: str | None = None
 
         self.overlay = Overlay(hotkey=self.config.get("hotkey", "shift+0"),
-                               on_toggle=self._on_toggle, on_quit=self.quit)
+                               on_toggle=self._on_toggle, on_quit=self.quit, on_escape=self._on_escape)
         self.bank = SpriteBank(self.overlay.root, base_scale=1)
         self.world = World(self.stages, self.config, self.save, self.overlay.w, self.overlay.h)
         self.renderer = Renderer(self.overlay.canvas, self.bank, self.config)
@@ -2714,6 +3468,22 @@ class App:
     def _key_up(self, key: str) -> None:
         self.world.key_up(key)
 
+    def _on_escape(self) -> None:
+        """Esc (overlay logical key "quit"): in the town the first press is the "다음 스테이지" shortcut — the cursor jumps
+        onto the exit row and Enter confirms (the header / footer keycap says Esc); a second Esc on that row quits like
+        everywhere else. A window-close request (WM_DELETE_WINDOW) goes straight to quit() via Overlay.on_quit."""
+        w = self.world
+        if w.state == "town" and getattr(w, "town", None) is not None:
+            try:
+                on_next = w.town["cursor"]["row"] == len(w._town_list(w._town_tab())) - 1
+            except (KeyError, TypeError, AttributeError):
+                on_next = False
+            if not on_next:
+                w.key_down("escape")
+                w.key_up("escape")
+                return
+        self.quit()
+
     def quit(self) -> None:
         if not self.running:
             return
@@ -2766,11 +3536,12 @@ class App:
 def main() -> int:
     try:
         app = App()
-    except RuntimeError as ex:
-        # 핫키 등록 실패 등: 콘솔 없이 실행되므로 메시지 박스로 안내
+    except Exception as ex:
+        # 핫키 등록 실패(RuntimeError)·깨진 cache.dat/config.json 등: 콘솔 없이 실행되므로 메시지 박스로 안내 (조용히 죽지 않게)
         try:
             import ctypes
-            ctypes.windll.user32.MessageBoxW(0, str(ex), "MolGam", 0x10)
+            text = str(ex) if isinstance(ex, RuntimeError) else "%s: %s" % (type(ex).__name__, ex)
+            ctypes.windll.user32.MessageBoxW(0, text, "MolGam", 0x10)
         except Exception:
             print(ex)
         return 1

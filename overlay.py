@@ -75,7 +75,8 @@ _KEYMAP = {
     "up": ["up", "jump"],
     "down": ["down"],
     "z": ["jump"],
-    "space": ["fire", "confirm"],
+    "space": ["fire"],           # fire 만: game.py 는 메뉴(select/continue/shop/town/game_over)에서 fire 도 확정으로 받는다.
+                                 # ["fire", "confirm"] 이면 Space 한 번에 확정이 두 번 (스탯 2단계 구매, 상점 카드 2장, 도박 2회)
     "x": ["fire"],
     "c": ["skill"],
     "u": ["update"],         # molgam 이 처리 (원격 업데이트 설치)
@@ -87,6 +88,9 @@ _KEYMAP = {
     "1": ["slot1"], "2": ["slot2"], "3": ["slot3"], "4": ["slot4"], "5": ["slot5"],   # 인벤토리 사용
     "kp_1": ["slot1"], "kp_2": ["slot2"], "kp_3": ["slot3"], "kp_4": ["slot4"], "kp_5": ["slot5"],
 }
+
+
+assert not any({"fire", "confirm"} <= set(v) for v in _KEYMAP.values()), "fire+confirm on one key = double confirm in menus"
 
 
 def _logical_keys(ks: str) -> tuple:
@@ -272,9 +276,10 @@ class _HotkeyThread(threading.Thread):
 
 # ---------------------------------------------------------------- 오버레이
 class Overlay:
-    def __init__(self, hotkey: str = "shift+0", on_toggle=None, on_quit=None):
+    def __init__(self, hotkey: str = "shift+0", on_toggle=None, on_quit=None, on_escape=None):
         self.on_toggle = on_toggle
-        self.on_quit = on_quit
+        self.on_quit = on_quit          # 창 닫기 요청 (WM_DELETE_WINDOW): 항상 종료
+        self.on_escape = on_escape      # Esc 키 (논리 키 "quit"); None 이면 on_quit 과 같다 (v2.0: 마을에서는 "다음" 줄 점프)
         self.hotkey_spec = hotkey
         self.trans_color = "#010203"
         self.visible = True
@@ -423,7 +428,10 @@ class Overlay:
             if self._on_down:
                 self._on_down(logical)
             if logical == "quit":
-                self._quit()
+                if self.on_escape:
+                    self.on_escape()
+                else:
+                    self._quit()
 
     def _key_release(self, e) -> None:
         ks = (e.keysym or "").lower()
