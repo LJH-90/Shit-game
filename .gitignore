@@ -12,3 +12,5 @@ DESIGN_NOTES.md
 README (1).md
 balance_log.jsonl
 tools/contact/
+tools/*.onnx
+tools/ult_*.png

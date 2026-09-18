@@ -37,6 +37,7 @@ MELEE_CD = 0.35                 # s between melee strikes (config "melee.cooldow
 MELEE_KNOCK_BOSS = 0.3          # bosses are shoved this fraction of the knockback
 ZONE_H = 120                    # height of a skill zone above the ground
 MAX_ZONES = 3
+ULT_T = 1.0                     # v2.0: ultimate portrait burst (C skill) — grow, hold, vanish in about a second
 DEFAULT_UNLOCK_STAGE = 5
 DEFAULT_SHOP = {                # key: [label, base cost, cost growth per level, max level (0 = unlimited)]
     "str": ["힘 +1", 1500, 1.25, 0],
@@ -278,7 +279,7 @@ class _Ent:
 
 class Player(_Ent):
     __slots__ = ("crouch", "fire_cd", "shoot_t", "inv_t", "dead", "death_t", "drop_t", "jump_buf", "on_platform",
-                 "weapon", "weapon_t", "ammo", "shield", "skill_cd", "melee_t", "combo", "combo_t")
+                 "weapon", "weapon_t", "ammo", "shield", "skill_cd", "melee_t", "combo", "combo_t", "ult_t")
 
     def __init__(self):
         super().__init__()
@@ -286,6 +287,7 @@ class Player(_Ent):
         self.combo_t = 0.0
         self.shield = 0
         self.skill_cd = 0.0
+        self.ult_t = 0.0            # v2.0: portrait burst timer (ULT_T -> 0)
         self.melee_t = 0.0
         self.weapon = "normal"
         self.weapon_t = 0.0
@@ -884,6 +886,7 @@ class World:
                     "melee_t": round(p.melee_t, 3),
                     "skill_label": (self.char["storm"].get("label", "서류 스톰") if self.char.get("storm") else None),
                     "skill_cd": (round(max(0.0, p.skill_cd), 2) if self.char.get("storm") else None),
+                    "ult": ({"t": round(p.ult_t, 3), "ttl": ULT_T} if p.ult_t > 0 and not p.dead else None),
                     "char_locked": [self._char_locked(k) for k in CHAR_KEYS],
                     "shop": self._shop_view() if self.state == "shop" else None,
                     "weapon": (p.weapon if p.weapon != "normal" else None),
@@ -1150,6 +1153,7 @@ class World:
         p.inv_t = invincible
         p.shield = self._shield_max()      # refilled every stage start and respawn
         p.skill_cd = 0.0
+        p.ult_t = 0.0
         p.melee_t = 0.0
         p.fire_cd = 0.0
         p.shoot_t = 0.0
@@ -1356,6 +1360,7 @@ class World:
         p.jump_buf = max(0.0, p.jump_buf - dt)
         p.shoot_t = max(0.0, p.shoot_t - dt)
         p.skill_cd = max(0.0, p.skill_cd - dt)
+        p.ult_t = max(0.0, p.ult_t - dt)
         p.melee_t = max(0.0, p.melee_t - dt)
         p.combo_t = max(0.0, p.combo_t - dt)
         if p.combo_t <= 0:
@@ -1534,18 +1539,28 @@ class World:
         p.melee_t = 0.25 if style != "hammer" else 0.4
 
     def _use_skill(self):
+        """C: ultimate. config "storm" per character: kind "storm" (paper storm in front, dongil) or
+        "quake" (hammer shockwave centred on the player, hyunki). Both are damage zones; the portrait burst
+        (hud.ult) plays on top for ULT_T seconds."""
         p = self.player
         storm = self.char.get("storm")
         if not storm or p.dead or p.skill_cd > 0 or len(self.zones) >= MAX_ZONES:
             return
+        kind = str(storm.get("kind", "storm"))
+        if kind not in ZONE_KINDS:
+            kind = "storm"
         w = float(storm.get("width", 160))
         dur = float(storm.get("duration", 3.0))
-        self.zones.append({"kind": "storm", "x": p.x + p.facing * (w / 2 + 10), "w": w, "t": dur, "ttl": dur,
+        centered = bool(storm.get("centered", kind == "quake"))
+        zx = p.x if centered else p.x + p.facing * (w / 2 + 10)
+        self.zones.append({"kind": kind, "x": zx, "w": w, "t": dur, "ttl": dur,
                            "tick": 0.0, "every": float(storm.get("tick", 0.4)),
                            "dmg": max(1, int(storm.get("damage", 1))) + self.upgrades.get("str", 0) // 3,
-                           "mdmg": self._magic_dmg(self.char), "element": self.element_key})
+                           "mdmg": self._magic_dmg(self.char), "element": self.element_key,
+                           "knock": float(storm.get("knockback", 0.0))})
         p.skill_cd = float(storm.get("cooldown", 8.0))
         p.shoot_t = 0.3
+        p.ult_t = ULT_T
         self._effect("text", p.x, p.y - PLAYER_H - 12, text=str(storm.get("label", "서류 스톰")))
 
     def _update_zones(self, dt: float):
@@ -1564,9 +1579,12 @@ class World:
             z["tick"] -= dt
             if z["tick"] <= 0:
                 z["tick"] = z["every"]
+                knock = float(z.get("knock", 0.0))
                 for e in self.enemies:
                     if e.alive and _overlap(e.box(), box):
                         self._strike(e, z["dmg"], z.get("mdmg", 0), z.get("element"))
+                        if knock > 0:
+                            e.x += (1 if e.x >= z["x"] else -1) * knock * (MELEE_KNOCK_BOSS if e.boss else 1.0)
             alive.append(z)
         self.zones = alive
 
@@ -3029,6 +3047,7 @@ WORD_KEYS = {"text", "typed", "x", "y", "kind", "t", "vy"}
 WARNING_KEYS = {"kind", "x", "t", "ttl"}
 WARNING_KINDS = ("ground", "sky")
 ZONE_KEYS = {"kind", "x", "w", "h", "t", "ttl"}
+ZONE_KINDS = ("storm", "quake")
 PLAYER_KEYS = {"x", "y", "anim", "frame", "flip", "palette", "scale", "invincible", "visible", "element"}
 ENEMY_KEYS = {"id", "x", "y", "anim", "frame", "flip", "palette", "scale", "label", "hp", "hp_max", "boss",
               "element", "mid", "sprint", "drop", "attack", "slow"}
@@ -3039,7 +3058,7 @@ EFFECT_KEYS = {"kind", "x", "y", "t", "text"}
 EFFECT_KINDS = ("hit", "spark", "text", "elem", "dust", "slash", "word", "coin", "boxopen")
 HUD_KEYS = {"lives", "score", "best", "stage_no", "stage_name", "difficulty", "boss_hp", "boss_hp_max",
             "banner", "banner_t", "char_name", "select_index", "char_names", "continue_stage", "show_enemy_hp",
-            "weapon", "weapon_label", "weapon_left", "shield", "shield_max", "melee_t", "skill_label", "skill_cd",
+            "weapon", "weapon_label", "weapon_left", "shield", "shield_max", "melee_t", "skill_label", "skill_cd", "ult",
             "char_locked", "shop", "element", "element_name", "element_names", "element_index", "stats",
             "char_stats", "element_colors", "equip", "equip_labels",
             "money", "difficulty_label", "difficulty_index", "difficulty_locked", "inventory", "inv_flash",
@@ -3080,7 +3099,7 @@ def _check_snapshot(s: dict):
         assert set(it.keys()) == ITEM_KEYS and it["kind"] in ITEM_KINDS
     assert len(s["items"]) <= MAX_ITEMS
     for z in s["zones"]:
-        assert set(z.keys()) == ZONE_KEYS and z["kind"] == "storm"
+        assert set(z.keys()) == ZONE_KEYS and z["kind"] in ZONE_KINDS
     assert len(s["hud"]["char_locked"]) == len(CHAR_KEYS)
     assert (s["hud"]["shop"] is not None) == (s["state"] == "shop")
     assert (s["hud"]["town"] is not None) == (s["state"] == "town")
@@ -3412,7 +3431,26 @@ def selftest() -> int:
     jw2 = _quiet("jaehwi", 34)
     jw2.key_down("skill"); jw2.key_up("skill")
     assert not jw2.zones and jw2.snapshot()["hud"]["skill_label"] is None
-    print("PASS 9: paper storm hits enemies inside, clears enemy bullets, cooldown holds")
+    assert dw.snapshot()["hud"]["ult"] is None
+    dw.key_down("skill"); dw.key_up("skill")               # cooldown still running -> no burst
+    assert dw.snapshot()["hud"]["ult"] is None
+    dw.player.skill_cd = 0.0
+    dw.key_down("skill"); dw.key_up("skill")
+    ult = dw.snapshot()["hud"]["ult"]
+    assert ult and 0 < ult["t"] <= ult["ttl"] == ULT_T, ult
+    _run(dw, ULT_T + 0.1)
+    assert dw.snapshot()["hud"]["ult"] is None, "portrait burst ends after ULT_T"
+    # v2.0 hyunki: quake zone centred on the player hits both sides and shoves
+    hw2 = _quiet("hyunki", 35)
+    left = _dummy(hw2, "teamlead", hw2.player.x - 90)
+    right = _dummy(hw2, "teamlead", hw2.player.x + 90)
+    lx, rx = left.x, right.x
+    hw2.key_down("skill"); hw2.key_up("skill")
+    assert len(hw2.zones) == 1 and hw2.zones[0]["kind"] == "quake" and hw2.player.ult_t > 0
+    _check_snapshot(hw2.snapshot())
+    _run(hw2, 0.5)
+    assert left.hp < 20 and right.hp < 20 and left.x < lx and right.x > rx, (left.hp, right.hp)
+    print("PASS 9: paper storm hits enemies inside, clears enemy bullets, cooldown holds; ult burst + quake")
 
     # 10) shop after stage clear: buy with score, next stage, upgrades survive 'continue'
     hw = World(stages, config, {"char": "jaehwi"}, 1920, 340, seed=35)

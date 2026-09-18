@@ -202,6 +202,7 @@ class Renderer:
         self.config = config
         self.player_item = None
         self.shield_item = None
+        self.ult_item = None                        # v2.0: 궁극 스킬 인물 사진 (발 기준 앵커 "s")
         self.aura_layers: list[int] = []            # 플레이어 속성 불꽃 오라 폴리곤 3장 (바깥→심지)
         self.ember_pool: list[int] = []             # 오라에서 떠오르는 불씨 6개
         self.enemy_items: dict[int, dict] = {}     # id -> {"img","label","hp","hpbg","ring"(불꽃 폴리곤)}
@@ -1054,6 +1055,11 @@ class Renderer:
             except (TypeError, ValueError):
                 zt = 1.0
             fade = min(1.0, max(0.0, zt / STORM_FADE))          # 마지막 0.4 초: 1 → 0 으로 좁아짐
+            if z.get("kind") == "quake":                        # v2.0 현기 해머 강타: 바닥 충격파 (깔때기 없음)
+                for it in self._zone_slot_items(slot):
+                    self._hide(it)
+                self._draw_quake_zone(ax_, gy, zw, zt, self._fnum(z.get("ttl")) or 1.0, now)
+                continue
             # 깔때기 2층: 안쪽 채움(폭 0.75) + 바깥 윤곽
             self.cv.coords(slot["outer"], *self._funnel_points(ax_, gy, zw, zh, now, zi * 1.7, fade))
             self.cv.coords(slot["inner"], *self._funnel_points(ax_, gy, zw, zh * 0.97, now, zi * 1.7 + 1.1, fade * 0.75))
@@ -1181,7 +1187,111 @@ class Renderer:
         self._draw_melee(snap, now)
         self._draw_allies(snap, now)
         self._draw_words(snap, now)
+        self._draw_ult(snap, now)
         self._fx_end()
+
+    # --- v2.0 현기 궁극 "해머 강타": 바닥을 따라 퍼지는 충격 고리 + 갈라진 금 + 먼지
+    def _draw_quake_zone(self, x: float, gy: float, w: float, t: float, ttl: float, now: float) -> None:
+        u = 1.0 - min(1.0, max(0.0, t / max(0.001, ttl)))         # 0 방금 → 1 끝
+        hw = w / 2.0
+        fade = min(1.0, max(0.0, t / 0.3))                        # 마지막 0.3 초 흐려짐
+        edge = _lerp_color(MELEE_AMBER, TEXT_SHADOW, 1.0 - fade)
+        for j in range(3):                                        # 충격 고리 3개, 중심에서 바깥으로
+            ph = min(1.0, u * 1.8 - j * 0.22)
+            if ph <= 0.0:
+                continue
+            rw = hw * ph
+            rh = 5.0 + 5.0 * ph
+            self._oval(x - rw, gy - rh, x + rw, gy + rh, outline=edge, width=3 if j == 0 else 2)
+        crack = min(1.0, u * 2.2)
+        for k in range(6):                                        # 갈라진 금: 좌우 3줄씩 지그재그
+            d = -1 if k < 3 else 1
+            L = hw * crack * (0.55 + 0.15 * (k % 3))
+            yk = 1.0 + 2.0 * (k % 3)
+            pts = [x, gy + yk]
+            n = 4
+            for i in range(1, n + 1):
+                pts.append(x + d * L * i / n)
+                pts.append(gy + yk + (2.5 if i % 2 else -2.0) * (1.0 + 0.3 * (k % 3)))
+            self._line(pts, fill=_lerp_color("#4a3a22", TEXT_SHADOW, 1.0 - fade), width=2)
+        for k in range(8):                                        # 먼지: 양옆으로 퍼지며 떠오름
+            ph = min(1.0, u * 1.6)
+            px = x + (k - 3.5) / 3.5 * hw * ph
+            py = gy - 5.0 - 16.0 * ph * (0.6 + 0.4 * math.sin(k * 1.9 + now * 3.0))
+            r = (3.0 + 3.0 * ph) * (0.5 + 0.5 * fade)
+            self._oval(px - r * 1.3, py - r, px + r * 1.3, py + r, fill=DUST_FILL, outline=DUST_EDGE)
+
+    # --- v2.0 궁극 스킬 사진 연출: 캐릭터 발 위치에 인물 누끼가 1배 → 2배로 "팍" 터져 나왔다가 사라짐 (약 1초)
+    def _draw_ult(self, snap: dict, now: float) -> None:
+        hud = snap.get("hud") or {}
+        ult = hud.get("ult")
+        p = snap.get("player") or {}
+        key = p.get("palette")
+        base_h = self.bank.ult_base_h(key) if (ult and key) else 0
+        if not ult or base_h <= 0 or not p.get("visible", True) or p.get("anim") == "death":
+            if self.ult_item is not None:
+                self._hide(self.ult_item)
+            return
+        t = self._fnum(ult.get("t"))
+        ttl = self._fnum(ult.get("ttl")) or 1.0
+        u = 1.0 - min(1.0, max(0.0, t / max(0.001, ttl)))         # 0 시작 → 1 끝
+        A, B = 0.3, 0.65                                          # 0~0.3 s 팽창(오버슈트) · ~0.65 s 유지 · ~1.0 s 소멸
+        if u < A:
+            s_ = u / A
+            e = 1.0 - (1.0 - s_) ** 3
+            k = 1.0 + e * (1.0 + 0.22 * math.sin(s_ * math.pi))
+        elif u < B:
+            k = 2.0 + 0.04 * math.sin(now * 28.0)
+        else:
+            s_ = (u - B) / (1.0 - B)
+            k = 2.0 * (1.0 - s_) ** 2
+        scale = max(1, int(p.get("scale", 2)) // 2)
+        hpx = base_h * scale * k
+        x, y = int(p["x"]), int(p["y"])
+        elem = p.get("element")
+        color = self._elem_color(hud, elem) if elem else "#ffd166"
+        light = _light_color(color, 0.6)
+        dark = _dim_color(color, 0.45)
+        cy = y - hpx * 0.55                                       # 가슴 높이 = 오라 중심
+        # 오라 (사진 뒤): 시작 섬광 → 회전하는 방사형 광선 → 바깥으로 퍼지는 고리 → 발밑 충격 타원
+        if u < 0.15:                                              # 시작 섬광: 흰 원이 빠르게 커지며 속성색으로
+            fs = u / 0.15
+            fr = hpx * (0.3 + 0.75 * fs)
+            self._oval(x - fr, cy - fr, x + fr, cy + fr, fill=_lerp_color("#ffffff", light, fs), outline="")
+        if k > 0.3:
+            n = 12
+            r_out = hpx * (0.62 + 0.08 * math.sin(now * 19.0)) * (1.0 if u < B else max(0.0, 1.0 - (u - B) / (1.0 - B)))
+            r_in = hpx * 0.40
+            rot = now * 2.4
+            pts = []
+            for i in range(n * 2):
+                a = rot + i * math.pi / n
+                r = r_out if i % 2 == 0 else r_in
+                pts.append(x + math.cos(a) * r)
+                pts.append(cy + math.sin(a) * r * 1.15)
+            self._poly(pts, fill=dark, outline=light, width=1, smooth=False)
+        for j in range(3):
+            ph = (u * 2.6 + j / 3.0) % 1.0 if u < B else min(1.0, (u - B) / (1.0 - B) * 1.5 + j * 0.2)
+            rr = hpx * (0.45 + 0.85 * ph)
+            self._oval(x - rr, cy - rr * 1.1, x + rr, cy + rr * 1.1,
+                       outline=_lerp_color(light, dark, ph), width=max(1, int(3 - 2 * ph)))
+        gw = hpx * (0.6 + 1.4 * min(1.0, u * 2.0))
+        self._oval(x - gw, y - 5, x + gw, y + 5, outline=color, width=2, dash=(5, 3))
+        # 사진: 하단을 캐릭터 발에 맞춰 정렬, 바라보는 방향으로 좌우 반전
+        if k < 0.45:
+            if self.ult_item is not None:
+                self._hide(self.ult_item)
+            return
+        res = self.bank.ult_photo(key, hpx, bool(p.get("flip")))
+        if res is None:
+            return
+        img, _w, _h = res
+        if self.ult_item is None:
+            self.ult_item = self.cv.create_image(0, 0, anchor="s")
+        shake = int(2 * math.sin(now * 70.0)) if u < A else 0
+        self.cv.coords(self.ult_item, x + shake, y + 1)
+        self.cv.itemconfig(self.ult_item, image=img, state="normal")
+        self.cv.tag_raise(self.ult_item)
 
     # --- v1.9 특수 탄 (폭탄 / 폭발 / 지면 충격파)
     def _draw_special_bullet(self, b: dict, kind: str, gy: float, now: float) -> None:
@@ -2406,6 +2516,10 @@ class App:
         # 자주 쓰는 팔레트 미리 생성 (선택 화면 + 1스테이지)
         try:
             self.bank.preload(list(CHAR_KEYS) + ["intern", "staff", "teamlead"], [1])
+        except Exception:
+            pass
+        try:                                   # v2.0 궁극 스킬 사진 사다리 (팀 없음). 에셋이 없어도 기동은 계속
+            self.bank.preload_ult(list(CHAR_KEYS))
         except Exception:
             pass
         try:                                   # v1.6 중간 보스 시트 (팀 A). 에셋이 없어도 기동은 계속

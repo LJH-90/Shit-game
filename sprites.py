@@ -33,6 +33,11 @@ import assets_data
 import assets_extra
 from assets_boss import BOSS_PROJ
 
+try:  # v2.0 ultimate-skill portraits cut from 궁극스킬/ (tools/import_ult_photos.py); optional
+    from assets_ult import ULT_PHOTOS
+except ImportError:  # pragma: no cover - generated module missing
+    ULT_PHOTOS = {}
+
 try:  # monsters cut from the 적/ sheets (tools/import_enemy_sheets.py); optional
     import assets_enemy
     ENEMY_PROJ = assets_enemy.ENEMY_PROJ
@@ -290,6 +295,45 @@ class SpriteBank:
             self._cache[key] = img
         return img
 
+    # -- v2.0 ultimate portraits ------------------------------------------
+    @staticmethod
+    def ult_base_h(key: str) -> int:
+        """1x sprite height the portrait ladder was built against, 0 when the key has no portrait."""
+        ph = ULT_PHOTOS.get(key)
+        return int(ph["base_h"]) if ph else 0
+
+    def ult_photo(self, key: str, height: float, flip: bool = False):
+        """(PhotoImage, w, h) of the portrait rung nearest ``height`` px, or None without a portrait."""
+        ph = ULT_PHOTOS.get(key)
+        if not ph or not ph["steps"]:
+            return None
+        h = min(ph["steps"], key=lambda k: abs(k - height))
+        ck = ("ult", key, h, bool(flip))
+        img = self._cache.get(ck)
+        if img is None:
+            w, hh, data = ph["steps"][h]
+            rows = []
+            for y in range(hh):
+                line = data[y * w * 4:(y + 1) * w * 4]
+                if flip:
+                    px = [line[i:i + 4] for i in range(0, len(line), 4)]
+                    px.reverse()
+                    line = b"".join(px)
+                rows.append(line)
+            png = encode_png(w, hh, rows)
+            img = self._tk.PhotoImage(master=self.root, data=base64.b64encode(png).decode("ascii"))
+            self._cache[ck] = img
+        return img, img.width(), img.height()
+
+    def preload_ult(self, keys) -> None:
+        for key in keys:
+            ph = ULT_PHOTOS.get(key)
+            if not ph:
+                continue
+            for h in ph["steps"]:
+                for flip in (False, True):
+                    self.ult_photo(key, h, flip)
+
     def preload(self, palettes: list[str], scales=(2,)) -> None:
         for pal in palettes:
             for anim, ids in CHAR_ANIMS.get(pal, ANIMS).items():
@@ -300,6 +344,6 @@ class SpriteBank:
 
 
 __all__ = ["PALETTES", "SpriteBank", "CLASSES", "CHAR_FRAMES", "CHAR_ANIMS", "CHAR_ANIM_FPS", "ANIM_ALIAS",
-           "BOSS_PROJ", "ENEMY_PROJ", "ENEMY_HIT", "FRAMES", "ANIMS", "ANIM_FPS",
+           "BOSS_PROJ", "ENEMY_PROJ", "ENEMY_HIT", "ULT_PHOTOS", "FRAMES", "ANIMS", "ANIM_FPS",
            "shade_color", "palette_lut",
            "encode_png", "render_rgba_rows", "frame_data"]

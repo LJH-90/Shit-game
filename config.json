@@ -37,6 +37,17 @@
       "jump": 1.0,
       "pierce": false,
       "shield": 3,
+      "storm": {
+        "label": "해머 강타",
+        "kind": "quake",
+        "cooldown": 10.0,
+        "duration": 1.2,
+        "width": 320,
+        "tick": 0.3,
+        "damage": 3,
+        "knockback": 28,
+        "centered": true
+      },
       "melee": {
         "style": "hammer",
         "range": 52,

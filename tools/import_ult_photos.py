@@ -1,0 +1,146 @@
+"""Build assets_ult.py from the photos in 궁극스킬/ (ultimate-skill portrait burst).
+
+For every character listed in PHOTOS the background is removed with the u2net
+segmentation model (onnxruntime; model file u2net.onnx from the rembg releases),
+the cut-out is cropped to its alpha box and pre-scaled to a ladder of pixel heights
+from 0.5x to 2.3x of the character's drawn (1x) sprite height.  The renderer picks
+the nearest rung while the portrait bursts out of the character, so the runtime
+stays pure standard library (no PIL / numpy in the game).
+
+    python tools/import_ult_photos.py [--model PATH/u2net.onnx] [--preview]
+
+Output: assets_ult.py  ->  ULT_PHOTOS[key] = {"base_h": int, "steps": {h: (w, h, rgba)}}
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import io
+import os
+import sys
+import zlib
+
+import numpy as np
+from PIL import Image, ImageOps
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+# character key -> photo file (under 궁극스킬/)
+PHOTOS = {"hyunki": "문현기.jpg", "dongil": "석동일.jpg"}
+# scale ladder relative to the character's 1x sprite height
+STEPS = [round(0.5 + 0.1 * i, 1) for i in range(19)]      # 0.5 .. 2.3
+MODEL_INPUT = 320
+
+
+def _find_model(explicit: str | None) -> str:
+    cands = [explicit] if explicit else []
+    cands += [os.path.join(ROOT, "tools", "u2net.onnx"),
+              os.path.join(os.path.expanduser("~"), ".u2net", "u2net.onnx")]
+    for c in cands:
+        if c and os.path.isfile(c):
+            return c
+    raise SystemExit("u2net.onnx not found; pass --model PATH "
+                     "(https://github.com/danielgatis/rembg/releases/download/v0.0.0/u2net.onnx)")
+
+
+def _segment(sess, img: Image.Image) -> Image.Image:
+    """u2net foreground probability as an L image the size of img."""
+    small = img.convert("RGB").resize((MODEL_INPUT, MODEL_INPUT), Image.LANCZOS)
+    arr = np.asarray(small, dtype=np.float32) / 255.0
+    arr = (arr - np.array([0.485, 0.456, 0.406], dtype=np.float32)) / np.array([0.229, 0.224, 0.225],
+                                                                                 dtype=np.float32)
+    arr = arr.transpose(2, 0, 1)[None, ...]
+    name = sess.get_inputs()[0].name
+    out = sess.run(None, {name: arr})[0][0, 0]
+    out = (out - out.min()) / max(1e-6, out.max() - out.min())
+    mask = Image.fromarray((out * 255).astype(np.uint8), "L").resize(img.size, Image.LANCZOS)
+    return mask
+
+
+def _cutout(sess, path: str) -> Image.Image:
+    img = ImageOps.exif_transpose(Image.open(path))
+    mask = _segment(sess, img)
+    # crisp edge: push soft alpha to 0/255 outside a thin band, keep the band for anti-aliasing
+    m = np.asarray(mask, dtype=np.float32)
+    m = np.clip((m - 96.0) / (192.0 - 96.0), 0.0, 1.0)
+    alpha = Image.fromarray((m * 255).astype(np.uint8), "L")
+    rgba = img.convert("RGBA")
+    rgba.putalpha(alpha)
+    box = alpha.point(lambda v: 255 if v > 24 else 0).getbbox()
+    if not box:
+        raise SystemExit(f"{path}: no foreground found")
+    return rgba.crop(box)
+
+
+def _idle_height(key: str) -> int:
+    try:
+        import sprites
+        (_w, h, _ax, _ay, _d), _ = sprites.frame_data(sprites.ANIMS["idle"][0], key)
+        return int(h)
+    except Exception:
+        return 60
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--model")
+    ap.add_argument("--preview", action="store_true", help="also write tools/ult_preview_<key>.png")
+    args = ap.parse_args()
+    import onnxruntime as ort
+    sess = ort.InferenceSession(_find_model(args.model), providers=["CPUExecutionProvider"])
+
+    photos: dict[str, dict] = {}
+    for key, fname in PHOTOS.items():
+        path = os.path.join(ROOT, "궁극스킬", fname)
+        if not os.path.isfile(path):
+            print(f"skip {key}: {path} missing")
+            continue
+        cut = _cutout(sess, path)
+        base_h = _idle_height(key)
+        if args.preview:
+            cut.save(os.path.join(ROOT, "tools", f"ult_preview_{key}.png"))
+        steps = {}
+        for k in STEPS:
+            h = max(8, int(round(base_h * k)))
+            w = max(4, int(round(cut.width * h / cut.height)))
+            im = cut.resize((w, h), Image.LANCZOS)
+            steps[h] = (w, h, im.tobytes())
+        photos[key] = {"base_h": base_h, "steps": steps}
+        print(f"{key}: cutout {cut.width}x{cut.height}, base_h {base_h}, {len(steps)} rungs "
+              f"{min(steps)}..{max(steps)} px")
+
+    # pack: one zlib blob, table of (key, base_h, [(h, w, offset, length)])
+    blob = bytearray()
+    table = {}
+    for key, ph in photos.items():
+        rows = []
+        for h, (w, hh, data) in sorted(ph["steps"].items()):
+            rows.append((h, w, len(blob), len(data)))
+            blob += data
+        table[key] = (ph["base_h"], rows)
+    b64 = base64.b64encode(zlib.compress(bytes(blob), 9)).decode("ascii")
+    lines = [b64[i:i + 100] for i in range(0, len(b64), 100)]
+    out = io.StringIO()
+    out.write('"""GENERATED by tools/import_ult_photos.py - do not edit by hand.\n\n'
+              'Ultimate-skill portraits (background removed) pre-scaled to a ladder of pixel heights.\n'
+              'ULT_PHOTOS[key] = {"base_h": 1x sprite height, "steps": {h: (w, h, rgba)}}; rgba = w*h*4 bytes,\n'
+              'row major, bottom-centre anchored by the renderer.\n"""\n')
+    out.write("import base64 as _b64\nimport zlib as _zlib\n\n")
+    out.write("_BLOB = _zlib.decompress(_b64.b64decode(\n")
+    for ln in lines:
+        out.write(f"    '{ln}'\n")
+    out.write("))\n\n")
+    out.write("_TABLE = " + repr(table) + "\n\n")
+    out.write("ULT_PHOTOS = {k: {'base_h': bh, 'steps': {h: (w, h, _BLOB[o:o + n]) for h, w, o, n in rows}}\n"
+              "              for k, (bh, rows) in _TABLE.items()}\n")
+    out.write("del _BLOB, _TABLE\n")
+    dst = os.path.join(ROOT, "assets_ult.py")
+    with open(dst, "w", encoding="utf-8") as f:
+        f.write(out.getvalue())
+    print(f"wrote {dst} ({os.path.getsize(dst) // 1024} KB)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
