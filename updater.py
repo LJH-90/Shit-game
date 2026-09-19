@@ -76,6 +76,61 @@ def merge_missing(dst: dict, src: dict) -> bool:
     return changed
 
 
+KEEP_TEXT_KEYS = ("name", "title", "boss_title", "boss_titles", "label", "hotkey")   # user-facing text survives a data reset
+
+
+def reset_blocks(dst: dict, src: dict, blocks, keep_text=KEEP_TEXT_KEYS) -> bool:
+    """v2.1: make the listed top-level blocks of dst follow the bundled src (a new exe shipped new numbers).
+    dict: recurse (keys missing in dst are added); numbers / bools / strings are overwritten, except keys in
+    keep_text (labels the user may have renamed) which are only added when missing; a list of dicts is merged
+    element by element (extra bundled entries appended, extra user entries kept); any other list or scalar is
+    replaced. Keys that exist only in dst are never touched. Returns True when anything changed."""
+    changed = False
+    if not (isinstance(dst, dict) and isinstance(src, dict)):
+        return False
+    for block in blocks:
+        if block not in src:
+            continue
+        if block not in dst:
+            dst[block] = src[block]
+            changed = True
+            continue
+        changed = _reset_value(dst, block, src[block], keep_text) or changed
+    return changed
+
+
+def _reset_value(parent, key, src_v, keep_text) -> bool:
+    dst_v = parent[key]
+    if isinstance(src_v, dict):
+        if not isinstance(dst_v, dict):
+            parent[key] = src_v
+            return True
+        changed = False
+        for k, v in src_v.items():
+            if k not in dst_v:
+                dst_v[k] = v
+                changed = True
+            elif k in keep_text and (isinstance(v, str) or (isinstance(v, list) and all(isinstance(x, str) for x in v))):
+                continue
+            else:
+                changed = _reset_value(dst_v, k, v, keep_text) or changed
+        return changed
+    if (isinstance(src_v, list) and src_v and all(isinstance(x, dict) for x in src_v)
+            and isinstance(dst_v, list) and all(isinstance(x, dict) for x in dst_v)):
+        changed = False
+        for i, v in enumerate(src_v):
+            if i < len(dst_v):
+                changed = _reset_value(dst_v, i, v, keep_text) or changed
+            else:
+                dst_v.append(v)
+                changed = True
+        return changed
+    if dst_v != src_v:
+        parent[key] = src_v
+        return True
+    return False
+
+
 def apply_swap(exe: str, new_path: str) -> None:
     """Put new_path in place of exe. A running exe cannot be overwritten on Windows, but it can be renamed."""
     old = exe + ".old"
@@ -313,6 +368,31 @@ def selftest() -> int:
     assert user["characters"]["masked"] == {"hidden": True} and user["lives"] == 3
     assert not merge_missing(user, bundled)
     print("PASS 6: config merge keeps user values, adds new keys")
+
+    # v2.1: a stale stages.json next to a new exe (the updater replaces only the exe) follows the bundled data blocks
+    stale = {"_comment": "old", "departments": [{"name": "총무", "waves": 3, "grunts": ["intern"], "lab": False,
+                                                 "boss_titles": ["내 상무"]},
+                                                {"name": "인사", "waves": 3, "grunts": ["staff"]}],
+             "ranks": {"intern": {"title": "인턴", "hp": 1, "boss_hp": 8, "boss": False}, "mine": {"hp": 1}},
+             "wave": {"spawn_stagger": 0.6}, "final_bosses": ["a"], "user_key": 1}
+    fresh = {"_comment": "new", "config_version": 2,
+             "departments": [{"name": "총무팀", "waves": 3, "grunts": ["intern", "staff"], "lab": False, "monsters": ["slime"],
+                              "boss_titles": ["상무"]},
+                             {"name": "인사팀", "waves": 4, "grunts": ["staff"]}, {"name": "재무팀", "waves": 3}],
+             "ranks": {"intern": {"title": "신입", "hp": 3, "boss_hp": 40, "boss": True, "sheet": True}},
+             "wave": {"spawn_stagger": 0.3, "max_count": 10}, "final_bosses": ["mai", "choi"], "curve": {"easy": {"hp": 0.7}}}
+    blocks = ("_comment", "departments", "ranks", "wave", "final_bosses", "curve")
+    assert reset_blocks(stale, fresh, blocks)
+    assert stale["_comment"] == "new" and stale["user_key"] == 1 and "config_version" not in stale
+    d0, d1, d2 = stale["departments"]
+    assert d0 == {"name": "총무", "waves": 3, "grunts": ["intern", "staff"], "lab": False, "monsters": ["slime"],
+                  "boss_titles": ["내 상무"]}, d0
+    assert d1["waves"] == 4 and d1["name"] == "인사" and d2 == {"name": "재무팀", "waves": 3}
+    assert stale["ranks"]["intern"] == {"title": "인턴", "hp": 3, "boss_hp": 40, "boss": True, "sheet": True}
+    assert stale["ranks"]["mine"] == {"hp": 1} and stale["wave"] == {"spawn_stagger": 0.3, "max_count": 10}
+    assert stale["final_bosses"] == ["mai", "choi"] and stale["curve"] == {"easy": {"hp": 0.7}}
+    assert not reset_blocks(stale, fresh, blocks)
+    print("PASS 7: stale data blocks follow the bundled file (labels kept)")
     print("UPDATER SELFTEST OK")
     return 0
 

@@ -80,7 +80,9 @@ GAMBLE_UPGRADE_UP = 2
 GAMBLE_UPGRADE_DOWN = 3
 GAMBLE_UPGRADE_DOWN_UNIQUE = 1                                 # 유니크 실패 시 -1 (확정 강화가 무의미해지지 않게)
 DOUBLE_WIN_CHANCE = 0.5
-DOUBLE_MAX_MULT = 8
+DOUBLE_MULT = 2                                                # 성공 시 판돈 배수 (연승은 표시용; EV = 0.5 x 2 = 1.0)
+DOUBLE_STREAK_BONUS = 0.0                                      # 연승 1회당 배수 가산 (0 = 없음; 0.5 x (2 + n x bonus) <= 1 유지)
+DOUBLE_MAX_MULT = 2                                            # 연승 가산을 포함한 배수 상한 (v2.0: 8 이라 연승 뒤 EV 2~4x = 무한 머니)
 SLOT_SYMBOLS = ("₩", "★", "◆", "♥", "7")
 SLOT_WEIGHTS = {"₩": 22, "★": 18, "◆": 22, "♥": 22, "7": 16}   # 릴 1개당 가중치 (기댓값 ≈ 0.82*bet)
 SLOT_PAYOUT = {"7": 30, "₩": 10, "◆": 5, "♥": 5, "★": 0}      # 3개 동일 시 bet 배수 (★ = 레어 장비)
@@ -493,11 +495,17 @@ def gamble_upgrade(rng, eq, money):
     return eq, money, text
 
 
+def double_mult(streak):
+    """더블업 성공 배수 = min(DOUBLE_MAX_MULT, DOUBLE_MULT + DOUBLE_STREAK_BONUS x streak). 기본 상수로는 항상 2."""
+    return min(float(DOUBLE_MAX_MULT), float(DOUBLE_MULT) + float(DOUBLE_STREAK_BONUS) * max(0, int(streak)))
+
+
 def gamble_double(rng, stake, streak):
-    """더블업: 50% 성공 → stake * min(2**(streak+1), 8); 실패 → 0. streak = 이전 연속 성공 횟수."""
+    """더블업: DOUBLE_WIN_CHANCE(50%) 성공 → stake x double_mult(streak) (기본 x2); 실패 → 0. streak = 이전 연속 성공 횟수.
+    v2.1: 판돈은 매 판 현재 돈에서 다시 잡히므로(game._town_gamble) 배수가 연승마다 2배로 뛰던 v2.0 공식(x4, x8)은
+    첫 성공 뒤 기대값 2~4배 = 무한 머니였다(v1.6 로그 st46: 159판에 +1.2억 ₩). 이제 매 판 기대값 <= 1."""
     if rng.random() < DOUBLE_WIN_CHANCE:
-        mult = min(DOUBLE_MAX_MULT, 2 ** (max(0, int(streak)) + 1))
-        return True, int(stake) * mult
+        return True, int(int(stake) * double_mult(streak))
     return False, 0
 
 
@@ -769,19 +777,41 @@ def _selftest():
         lv0, _, text = gamble_upgrade(R(2), {"slot": "hat", "rarity": rar, "level": 0, "name": "x"}, 10 ** 6)
         assert lv0["level"] == 0 and "변화 없음" in text and "-0" not in text, (rar, text)
 
-    # (g) double-up cap
+    # (g) double-up: every round EV <= 1 whatever the streak (v2.0's 2**(streak+1) ladder was an infinite-money exploit)
     rng = R(7)
     seen_win = seen_lose = False
     for streak in range(0, 8):
-        for _ in range(200):
+        assert DOUBLE_WIN_CHANCE * double_mult(streak) <= 1.0 + 1e-9, (streak, double_mult(streak))
+        assert double_mult(streak) == 2, streak                  # default constants: plain double-or-nothing
+        wins = 0
+        for _ in range(400):
             ok, pay = gamble_double(rng, 100, streak)
             if ok:
                 seen_win = True
-                assert pay == 100 * min(DOUBLE_MAX_MULT, 2 ** (streak + 1)) and pay <= 800
+                wins += 1
+                assert pay == int(100 * double_mult(streak)) == 200
             else:
                 seen_lose = True
                 assert pay == 0
+        assert 140 <= wins <= 260, wins                          # ~50 %
     assert seen_win and seen_lose
+    # a compounding session (stake = 50 % of the current money, keep playing on wins) no longer trends upward
+    rng = R(70)
+    ends = []
+    for _ in range(300):
+        money, streak = 10000, 0
+        for _round in range(30):
+            stake = max(100, int(money * 0.5))
+            if money < stake:
+                break
+            money -= stake
+            ok, pay = gamble_double(rng, stake, streak)
+            money += pay
+            streak = streak + 1 if ok else 0
+        ends.append(money)
+    mean_end = sum(ends) / len(ends)
+    print("double-up 30 rounds at 50%% stake: mean end %.0f of 10000 (v2.0 formula exploded)" % mean_end)
+    assert mean_end <= 10000 * 1.5, mean_end
 
     # (h) slots EV
     rng = R(8)

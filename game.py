@@ -184,13 +184,14 @@ DIFF_UNLOCK = {"hell": ("any", 20), "crazy": ("hell", 30)}   # difficulty -> (cl
 # v2.0: explicit curve for the learning difficulties ONLY (stages.json "curve" overrides). hard / harder / hell /
 # crazy have no entry and keep the DIFF_MULT-derived formula untouched. warmup / count_warmup multiply hp+speed /
 # count on stages 1-3; hp_per_stage / boss_hp_per_stage / speed_cap replace progression / ENEMY_SPEED_STAGE_CAP.
+# v2.1 boss_keep: fraction of the damage a (mid) boss already took that survives the player's death (hard+: 0 = full reset).
 DIFF_CURVE = {
     "easy": {"hp": 0.70, "speed": 0.80, "count": 0.85, "proj": 0.70, "money": 0.85,
              "warmup": {1: 0.65, 2: 0.80, 3: 0.92}, "count_warmup": {1: 0.75, 2: 0.85, 3: 0.95},
-             "hp_per_stage": 0.22, "boss_hp_per_stage": 0.08, "speed_cap": 2.2},
+             "hp_per_stage": 0.22, "boss_hp_per_stage": 0.08, "speed_cap": 2.2, "boss_keep": 1.0},
     "normal": {"hp": 1.00, "speed": 1.00, "count": 1.00, "proj": 1.00, "money": 1.00,
                "warmup": {1: 0.80, 2: 0.90, 3: 1.00}, "count_warmup": {1: 0.85, 2: 0.95, 3: 1.00},
-               "hp_per_stage": 0.28, "boss_hp_per_stage": 0.08, "speed_cap": 2.6},
+               "hp_per_stage": 0.28, "boss_hp_per_stage": 0.08, "speed_cap": 2.6, "boss_keep": 0.5},
 }
 
 DEFAULT_DIFFICULTY = {"easy": {"hp": 0.8, "speed": 0.9, "count": 0.8},   # legacy: never drives a stage (v1.9+)
@@ -661,6 +662,7 @@ class World:
         self.boss_gap = 0.0
         self.wave_gap = 0.0
         self.boss_ref: Enemy | None = None
+        self._boss_carry: dict | None = None    # v2.1: damage a (mid) boss keeps across the player's death (boss_keep)
         self.banner: str | None = None
         self.banner_t = 0.0
         self.banner_ttl: float | None = None
@@ -1133,6 +1135,7 @@ class World:
         st["hp_per_stage"] = float((cv or {}).get("hp_per_stage", self.progression["hp_per_stage"]))
         st["boss_hp_per_stage"] = float((cv or {}).get("boss_hp_per_stage", self.progression["boss_hp_per_stage"]))
         st["speed_cap"] = float((cv or {}).get("speed_cap", ENEMY_SPEED_STAGE_CAP))
+        st["boss_keep"] = max(0.0, min(1.0, float((cv or {}).get("boss_keep", 0.0))))   # v2.1 (hard+: 0)
         monsters = [k for k in (d.get("monsters") or []) if k in self.ranks]
         grunts = list(d.get("grunts") or ["manager"])
         elites = list(d.get("elites") or [])
@@ -1244,6 +1247,7 @@ class World:
         self.saved_equip = dict(self.equip)
         self._equip_msg = None
         self.boss_ref = None
+        self._boss_carry = None
         self.wave_index = 0
         self.boss_index = 0
         self.mid_done = False
@@ -1358,6 +1362,16 @@ class World:
         e.facing = -1
         self.enemies.append(e)
         self.boss_ref = e
+        self._apply_boss_carry(e)
+
+    def _apply_boss_carry(self, e: Enemy) -> None:
+        """v2.1: the boss that was up when the player died comes back with boss_keep x the damage it had taken
+        (easy 1.0 = exactly where it was, normal 0.5, hard+ 0 = full reset). Same rank + mid flag only."""
+        c, self._boss_carry = self._boss_carry, None
+        keep = float(self.stage.get("boss_keep", 0.0)) if self.stage else 0.0
+        if not c or keep <= 0 or c.get("rank") != e.rank or bool(c.get("mid")) != bool(e.mid):
+            return
+        e.hp = max(1, e.hp_max - int(round(float(c.get("lost", 0)) * keep)))
 
     def _mid_boss_eligible(self) -> list:
         return [m for m in self.mid_bosses if self.stage_no >= int(m.get("from_stage", 1))]
@@ -1377,12 +1391,12 @@ class World:
             return
         m = elig[self.stage_no % len(elig)]
         title = str(m.get("title") or self._rank(m["rank"]).get("title", "중간 보스"))
-        e = self._make_enemy(m["rank"], self.width + 60.0, boss=True, title=title)
-        e.mid = True
+        e = self._make_enemy(m["rank"], self.width + 60.0, boss=True, title=title, mid=True)
         e.intro = True
         e.facing = -1
         self.enemies.append(e)
         self.boss_ref = e
+        self._apply_boss_carry(e)
         self._set_banner(f"중간 보스 · {title}", MID_BANNER_T)
 
     def _enemy_speed_mult(self) -> float:
@@ -1403,7 +1417,8 @@ class World:
         except (TypeError, ValueError):
             return DEFAULT_EQUIP_MAX
 
-    def _make_enemy(self, rank_key: str, x: float, boss: bool = False, title: str | None = None) -> Enemy:
+    def _make_enemy(self, rank_key: str, x: float, boss: bool = False, title: str | None = None,
+                    mid: bool = False) -> Enemy:
         r = self._rank(rank_key)
         mult = self.stage["mult"] if self.stage else DEFAULT_DIFFICULTY["normal"]
         e = Enemy()
@@ -1461,6 +1476,7 @@ class World:
         e.proj = r["proj"] if isinstance(r.get("proj"), dict) else None
         e.attack_cd = self.rng.uniform(0.3, 1.0)
         e.born = self.play_t
+        e.mid = bool(boss and mid)              # v2.1: set before the spawn is logged ("mid" vs "boss" columns)
         self._bal_enemy(e, killed=False)
         e.label = title or r.get("title", rank_key)
         e.facing = 1 if e.x < self.width / 2 else -1
@@ -1602,6 +1618,8 @@ class World:
                 self._effect("dust", p.x, p.y)
                 self._effect("text", p.x, p.y - PLAYER_H - 12, text="구조!")
                 return
+            if not p.dead:
+                self._bal_add("deaths_pit", 1)  # v2.1: balance log — pit falls counted apart from hits
             self._kill_player(force=True)   # fell into a pit
             return
         # weapon timer
@@ -1813,6 +1831,7 @@ class World:
             self.shop_msg = f"점수 부족 ({cost - self.score:,}점 모자람)"
             return
         self.score -= cost                      # spent score never comes back: upgrades cost the high score
+        self._bal_add("score_spent", cost)      # v2.1: balance log (carried into the next stage's record)
         self.upgrades[key] += 1
         if key == "life":
             self.lives = min(9, self.lives + 1)
@@ -2346,10 +2365,11 @@ class World:
             elif game == 1:
                 stake = max(100, int(money * DOUBLE_STAKES[t["stake_i"]]))
                 streak = int(t["streak"])
-                mult = min(int(getattr(economy, "DOUBLE_MAX_MULT", 8)), 2 ** (streak + 1))
+                mult = economy.double_mult(streak) if hasattr(economy, "double_mult") else 2   # v2.1: x2 flat (EV <= 1)
+                mult = int(mult) if float(mult).is_integer() else round(float(mult), 2)
                 win = int(round(float(getattr(economy, "DOUBLE_WIN_CHANCE", 0.5)) * 100))
                 base.update(name="더블업", slot="g1", slot_label="도박장", action="gamble", buy=stake,
-                            rows=[R("판돈 ₩", money, money - stake), R(f"성공 {win}%", money, money - stake + stake * mult),
+                            rows=[R("판돈 ₩", money, money - stake), R(f"성공 {win}%", money, money - stake + int(stake * mult)),
                                   R(f"실패 {100 - win}%", money, money - stake), R("연승", streak, streak + 1)],
                             after_msg=f"판돈 {int(DOUBLE_STAKES[t['stake_i']] * 100)}% · 성공 시 ×{mult} · C 판돈 변경")
             else:
@@ -2945,6 +2965,8 @@ class World:
                         else:
                             it.t = 0.0      # fell into a pit
             if it.t <= 0:
+                if it.kind == "coin":
+                    self._bal_add("coins_lost", int(it.value))   # v2.1: balance log — floor money that expired
                 continue
             if not p.dead and (self._coin_reach(it, p) if it.kind == "coin" else _overlap(it.box(), pbox)):
                 if self._pickup(it.kind, it.value):
@@ -3708,6 +3730,8 @@ class World:
             return
         # restart current wave / boss (v2.0: coin piles on the floor survive the respawn)
         b = self.boss_ref
+        if b is not None and b.alive and b.hp < b.hp_max and float(self.stage.get("boss_keep", 0.0)) > 0:
+            self._boss_carry = {"rank": b.rank, "mid": bool(b.mid), "lost": b.hp_max - b.hp}   # v2.1 (learning difficulties)
         if b is not None and not b.alive:      # the (mid) boss fell during the death animation: it already paid
             self.boss_ref = None               # (money / gear / legacy grant in _kill_enemy) -> never fight it twice
             if self.phase == "midboss":        # (_check_progress skips dead players, so resolve the kill here)
@@ -3826,10 +3850,12 @@ class World:
                      "player": {"phys": self._phys_dmg(c), "magic": self._magic_dmg(c),
                                 "fire_rate": round(FIRE_RATE * self._fire_rate_mult(c), 2),
                                 "speed": round(self._speed_mult(c), 3), "shield_max": self._shield_max(),
-                                "stats": self._eff_stats(c), "equip": self._equip_fx()},
+                                "stats": self._eff_stats(c), "equip": self._equip_fx(),
+                                "upgrades": dict(self.upgrades), "legacy": dict(self.equip)},   # v2.1: score shop / boss gear levels
+                     "mult": {k: round(float(v), 3) for k, v in (self.stage.get("mult") or {}).items()},
                      "enemy_hp": {}, "ttk": {}, "spawned": 0, "killed": 0, "shots": 0, "hits_shield": 0,
-                     "hits_life": 0, "deaths": 0, "money": 0, "spent": 0, "items_used": 0, "words": 0,
-                     "typed": 0, "gear": 0, "melee_dmg": 0, "gambles": 0}
+                     "hits_life": 0, "deaths": 0, "deaths_pit": 0, "money": 0, "spent": 0, "score_spent": 0,
+                     "coins_lost": 0, "items_used": 0, "words": 0, "typed": 0, "gear": 0, "melee_dmg": 0, "gambles": 0}
         for k, v in self._bal_carry.items():    # v2.0: town / shop sinks + sources (spent, gambles, money) land here
             self._bal[k] = self._bal.get(k, 0) + v
         self._bal_carry = {}
@@ -3844,7 +3870,7 @@ class World:
         b = self._bal
         if not b:
             return
-        k = "boss" if e.boss else e.kind
+        k = "mid" if (e.boss and e.mid) else "boss" if e.boss else e.kind   # v2.1: mid bosses get their own column
         if not killed:
             b["spawned"] += 1
             b["enemy_hp"].setdefault(k, []).append(e.hp_max)
@@ -3863,10 +3889,12 @@ class World:
                "ttk_max": {k: max(v) for k, v in b["ttk"].items() if v},
                "spawned": b["spawned"], "killed": b["killed"], "shots": b["shots"],
                "hits_shield": b["hits_shield"], "hits_life": b["hits_life"], "deaths": b["deaths"],
-               "lives_end": self.lives, "money_gained": b["money"], "money_spent": b["spent"],
-               "money_end": self.money, "score_gained": self.score - b["score0"], "items_used": b["items_used"],
-               "words_done": b["words"], "letters_typed": b["typed"], "gear_drops": b["gear"],
-               "melee_dmg": b["melee_dmg"], "gambles": b["gambles"], "revives": b.get("revives", 0)}
+               "deaths_pit": b.get("deaths_pit", 0), "lives_end": self.lives, "money_gained": b["money"],
+               "money_spent": b["spent"], "money_end": self.money, "score_gained": self.score - b["score0"],
+               "score_spent": b.get("score_spent", 0), "coins_lost": b.get("coins_lost", 0),
+               "items_used": b["items_used"], "words_done": b["words"], "letters_typed": b["typed"],
+               "gear_drops": b["gear"], "melee_dmg": b["melee_dmg"], "gambles": b["gambles"],
+               "revives": b.get("revives", 0), "mult": b.get("mult", {})}
         self.balance_log.append(rec)
         if len(self.balance_log) > BALANCE_LOG_MAX:
             del self.balance_log[0:len(self.balance_log) - BALANCE_LOG_MAX]
@@ -5163,6 +5191,26 @@ def selftest() -> int:
         assert st4["hp_per_stage"] == cv["hp_per_stage"] and st4["speed_cap"] == cv["speed_cap"]
         assert ed._build_stage(1)["mult"]["speed"] < ed._build_stage(2)["mult"]["speed"] < ed._build_stage(3)["mult"]["speed"]
         assert ed._build_stage(25)["mult"]["hp"] > st4["mult"]["hp"], "infinite cycles still escalate"
+    # v2.1: on easy / normal a boss keeps (part of) the damage it took across the player's death (curve "boss_keep");
+    # hard+ have no curve entry -> boss_keep 0 -> full reset exactly as before
+    for diff, keep in (("easy", DIFF_CURVE["easy"]["boss_keep"]), ("normal", DIFF_CURVE["normal"]["boss_keep"]), ("hard", 0.0)):
+        bk = World(stages, config, {"difficulty": diff}, 1920, 340, seed=115)
+        bk._start_game(1)
+        assert bk.stage["boss_keep"] == keep, (diff, bk.stage["boss_keep"])
+        bk.enemies.clear(); bk.pending.clear(); bk.warnings.clear()
+        bk.phase = "boss"; bk._spawn_boss()
+        boss = bk.boss_ref; boss.intro = False
+        boss.hp = boss.hp_max - 40
+        bk.lives = 3
+        bk._debug_kill_player()
+        _run(bk, 1.05)                           # death animation -> _after_death: respawn, boss cleared
+        assert bk.lives == 2 and bk.boss_ref is None and bk.state == "play" and not bk.enemies, (diff, bk.lives, bk.state)
+        _run(bk, BOSS_GAP + 0.2)
+        nb = bk.boss_ref
+        assert nb is not None and nb is not boss and nb.hp_max == boss.hp_max, diff
+        assert nb.hp == nb.hp_max - int(round(40 * keep)), (diff, nb.hp, nb.hp_max, keep)
+        assert bk._boss_carry is None and bk.snapshot()["hud"]["boss_hp"] == nb.hp
+    print("PASS 20b: boss_keep: easy keeps boss damage across a death, normal half, hard+ full reset")
     # boss jump : dash odds ~ 1 : 5
     bw9 = _fresh("jaehwi", 109)
     jumps = dashes = 0
@@ -5202,6 +5250,8 @@ def selftest() -> int:
     log = tw5.drain_log()
     assert len(log) == 1 and log[0]["reason"] == "clear" and log[0]["stage"] == 5 and "player" in log[0], log
     assert set(log[0]) >= {"duration", "enemy_hp_avg", "ttk_avg", "hits_shield", "hits_life", "money_gained"}
+    assert set(log[0]) >= {"score_spent", "deaths_pit", "coins_lost", "mult"} and log[0]["mult"]["hp"] > 0   # v2.1 columns
+    assert log[0]["player"]["upgrades"] == tw5.upgrades and log[0]["player"]["legacy"] == tw5.equip
     _run(tw5, CLEAR_TO_SHOP + 0.1)
     assert tw5.state == "town" and len(tw5.shop_stock) == 10
     tw5.score = 50000

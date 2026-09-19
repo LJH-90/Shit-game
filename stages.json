@@ -1,5 +1,6 @@
 {
-  "_comment": "MolGam stage data. Edit freely: departments (10, in order), executive_stages (after departments), ranks (palette -> stats), difficulty multipliers (infinite rotation), wave sizing. v1.9: ranks with sheet=true use their own sprite sheet (assets_enemy). melee=true stops at reach and bites; proj {anim,w,h,speed,aim,gravity,fuse,blast}. departments[].monsters join the roster from monsters_from_stage.",
+  "_comment": "MolGam stage data (config_version 2: a newer bundled file resets the data blocks on load, keeping name/title labels). Edit freely: departments (10, in order), executive_stages (after departments), ranks (palette -> stats), difficulty multipliers (infinite rotation), wave sizing. v1.9: ranks with sheet=true use their own sprite sheet (assets_enemy). melee=true stops at reach and bites; proj {anim,w,h,speed,aim,gravity,fuse,blast}. departments[].monsters join the roster from monsters_from_stage.",
+  "config_version": 2,
   "departments": [
     {
       "name": "총무팀",
@@ -976,7 +977,8 @@
       "count_warmup": {"1": 0.75, "2": 0.85, "3": 0.95},
       "hp_per_stage": 0.22,
       "boss_hp_per_stage": 0.08,
-      "speed_cap": 2.2
+      "speed_cap": 2.2,
+      "boss_keep": 1.0
     },
     "normal": {
       "hp": 1.0,
@@ -988,7 +990,8 @@
       "count_warmup": {"1": 0.85, "2": 0.95, "3": 1.0},
       "hp_per_stage": 0.28,
       "boss_hp_per_stage": 0.08,
-      "speed_cap": 2.6
+      "speed_cap": 2.6,
+      "boss_keep": 0.5
     }
   },
   "wave": {

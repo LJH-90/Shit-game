@@ -40,7 +40,14 @@ def load_json(name: str, default=None):
     raise FileNotFoundError(name)
 
 
-CONFIG_RESET_BLOCKS = ("equipment",)   # config_version 이 오르면 이 블록들의 숫자 값은 동봉본으로 덮어쓴다 (문자열·사용자 키는 유지)
+# config_version 이 오르면(새 exe 동봉본 > exe 옆 파일) 이 블록들은 동봉본을 따른다 (updater.reset_blocks: 숫자·불·리스트 덮어쓰기,
+# name/title/label 같은 사용자 문구와 파일에만 있는 키는 유지). 업데이터는 exe 만 바꾸므로 exe 옆 stages.json 이 v1.x 수치
+# (적 HP 1/3, 몬스터 없음)로 남던 문제 — v2.1 부터 stages.json 도 config_version 을 갖는다.
+DATA_RESET_BLOCKS = {
+    "config.json": ("equipment", "characters"),
+    "stages.json": ("_comment", "_comment_difficulty", "departments", "executive_stages", "ranks", "difficulty", "curve",
+                    "wave", "progression", "final_bosses", "mid_bosses", "monsters_from_stage"),
+}
 
 
 def _config_version(d) -> int:
@@ -50,25 +57,11 @@ def _config_version(d) -> int:
         return 1
 
 
-def _reset_numbers(dst, src) -> bool:
-    """src 의 숫자 값(bool 제외)을 같은 자리의 dst 에 덮어쓴다 (dict 는 재귀). 바뀐 게 있으면 True."""
-    changed = False
-    if not (isinstance(dst, dict) and isinstance(src, dict)):
-        return False
-    for k, v in src.items():
-        if isinstance(v, dict):
-            changed = _reset_numbers(dst.get(k), v) or changed
-        elif isinstance(v, (int, float)) and not isinstance(v, bool) and dst.get(k) != v:
-            dst[k] = v
-            changed = True
-    return changed
-
-
 def load_config_file(name: str):
     """exe 옆 파일을 우선 쓰되, 새 버전 exe 에 동봉된 파일에만 있는 키는 채워 넣고 저장한다.
     (업데이트 후에도 사용자가 바꾼 핫키·이름은 그대로, 새 캐릭터·설정 키는 추가)
-    v2.0: 동봉본의 "config_version" 이 더 크면 CONFIG_RESET_BLOCKS 의 숫자 값도 동봉본으로 덮어쓴다 — merge_missing 은 키만
-    채우므로 v1.6 config.json 의 레거시 장비 수치(레벨당 효과 2배)가 그대로 남던 문제."""
+    v2.0: 동봉본의 "config_version" 이 더 크면 DATA_RESET_BLOCKS[name] 블록은 동봉본을 따른다 — merge_missing 은 키만
+    채우므로 v1.6 config.json 의 레거시 장비 수치, v1.x stages.json 의 적 HP(1/3)·몬스터 목록이 그대로 남던 문제."""
     ext = os.path.join(base_dir(), name)
     bun = os.path.join(bundled_dir(), name)
     if os.path.abspath(ext) == os.path.abspath(bun) or not (os.path.isfile(ext) and os.path.isfile(bun)):
@@ -82,8 +75,7 @@ def load_config_file(name: str):
     old_ver = _config_version(data)            # merge_missing 이 config_version 키를 채우기 전에 읽는다
     changed = updater.merge_missing(data, bundled)
     if old_ver < _config_version(bundled):
-        for block in CONFIG_RESET_BLOCKS:
-            _reset_numbers(data.get(block), bundled.get(block))
+        updater.reset_blocks(data, bundled, DATA_RESET_BLOCKS.get(name, ()))
         data["config_version"] = bundled["config_version"]
         changed = True
     if changed:
@@ -3432,6 +3424,7 @@ class App:
                     rec = dict(rec)
                     rec["at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                     rec["version"] = VERSION
+                    rec["data"] = {"stages": _config_version(self.stages), "config": _config_version(self.config)}   # v2.1
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:
             pass
