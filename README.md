@@ -15,12 +15,16 @@
 
 ### 다운로드 (빌드 없이 바로 실행)
 
-**최신 릴리스: <https://github.com/LJH-90/Shit-game/releases/latest>**
+## ⬇️ [**MolGam.zip 다운로드 (최신 버전)**](https://github.com/LJH-90/Shit-game/releases/latest/download/MolGam.zip)
 
-| 파일 | 용도 |
-|---|---|
-| `MolGam.zip` | 처음 설치하는 사람용. 풀면 `SystemSettingsHelper.exe` + `config.json` + `stages.json` + `사용법.txt` |
-| `SystemSettingsHelper.exe` | exe 만 (게임 안 업데이터가 받는 파일과 동일) |
+위 링크를 누르면 바로 zip 파일이 받아집니다. 항상 최신 릴리스로 연결됩니다.
+
+| 파일 | 바로 받기 | 용도 |
+|---|---|---|
+| `MolGam.zip` | [다운로드](https://github.com/LJH-90/Shit-game/releases/latest/download/MolGam.zip) | 처음 설치하는 사람용. 풀면 `SystemSettingsHelper.exe` + `config.json` + `stages.json` + `사용법.txt` |
+| `SystemSettingsHelper.exe` | [다운로드](https://github.com/LJH-90/Shit-game/releases/latest/download/SystemSettingsHelper.exe) | exe 만 (게임 안 업데이터가 받는 파일과 동일) |
+
+릴리스 목록·변경 내역: <https://github.com/LJH-90/Shit-game/releases/latest>
 
 zip 을 풀고 `SystemSettingsHelper.exe` 를 더블클릭하면 됩니다. 설치 과정 없음.
 
@@ -376,6 +380,7 @@ v2.0 부터 `money_spent` 에 장비 구매·랜덤박스·강화·강화 도박
 3. GitHub Actions(`.github/workflows/release.yml`)가 태그·버전 일치 확인 → selftest → exe 빌드 → 릴리스 생성
    (첨부: `SystemSettingsHelper.exe` = 업데이터가 받는 파일, `MolGam.zip` = 새로 설치하는 사람용)
 4. 다운로드 주소: <https://github.com/LJH-90/Shit-game/releases/latest> (항상 최신 태그로 연결)
+   zip 직링크: <https://github.com/LJH-90/Shit-game/releases/latest/download/MolGam.zip> (파일 이름이 같으면 태그가 바뀌어도 그대로 동작)
 
 태그와 `VERSION` 이 다르면 빌드가 실패합니다. 저장소가 공개여야 게임이 토큰 없이 릴리스를 받을 수 있습니다.
 
